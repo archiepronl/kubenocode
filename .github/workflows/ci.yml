@@ -261,18 +261,16 @@ jobs:
 
       - name: Helm lint
         run: |
-          if [ -d "deploy/helm/kttm" ]; then
-            helm lint deploy/helm/kttm --values deploy/helm/kttm/values.yaml
-          elif [ -d "deploy/helm/flowengine" ]; then
-            helm lint deploy/helm/flowengine --values deploy/helm/flowengine/values.yaml
+          if [ -d "deploy/helm/kubenocode" ]; then
+            helm lint deploy/helm/kubenocode --values deploy/helm/kubenocode/values.yaml
           else
             echo "No Helm chart found yet — skipping"
           fi
 
       - name: Helm template (dry run)
         run: |
-          if [ -d "deploy/helm/kttm" ]; then
-            helm template kttm deploy/helm/kttm --values deploy/helm/kttm/values.yaml > /dev/null
+          if [ -d "deploy/helm/kubenocode" ]; then
+            helm template kubenocode deploy/helm/kubenocode --values deploy/helm/kubenocode/values.yaml > /dev/null
           fi
 
   # ──────────────────────────────────────────────────────────────────────────

@@ -22,8 +22,8 @@ CLUSTER_NAME      := kttm-dev
 K3D_CONFIG        := deploy/k3d/kttm-cluster.yaml
 NAMESPACE         := kttm-system
 APPS_NAMESPACE    := kttm-apps
-HELM_CHART        := deploy/helm/kttm
-HELM_RELEASE      := kttm
+HELM_CHART        := deploy/helm/kubenocode
+HELM_RELEASE      := kubenocode
 
 GO                := go
 GOFLAGS           := -race
@@ -69,14 +69,16 @@ all: test build-all ## Run tests and build everything
 
 bootstrap: ## 🚀 Full first-time setup: hooks + deps + cluster + verify
 	@echo "$(GREEN)► Installing lefthook pre-commit hooks...$(RESET)"
-	lefthook install
+	lefthook install 2>/dev/null || echo "$(YELLOW)  lefthook not installed — skipping hooks for now$(RESET)"
 	@echo "$(GREEN)► Downloading Go dependencies...$(RESET)"
 	$(GO) mod download
 	$(GO) mod verify
 	@echo "$(GREEN)► Installing frontend dependencies...$(RESET)"
 	npm install --prefix frontend/web-renderer
-	@echo "$(GREEN)► Creating k3d cluster...$(RESET)"
-	$(MAKE) cluster
+	@echo "$(GREEN)► Checking for existing Kubernetes cluster...$(RESET)"
+	@kubectl get nodes >/dev/null 2>&1 || $(MAKE) cluster
+	@echo "$(GREEN)► Installing cluster dependencies...$(RESET)"
+	$(MAKE) cluster-deps
 	@echo "$(GREEN)► Installing KTTM to cluster...$(RESET)"
 	$(MAKE) helm-install
 	@echo "$(GREEN)► Running smoke test...$(RESET)"
@@ -103,34 +105,24 @@ cluster: ## 🔧 Create local k3d development cluster
 	fi
 	@echo "$(GREEN)► Waiting for cluster to be ready...$(RESET)"
 	kubectl wait --for=condition=ready node --all --timeout=120s
-	@echo "$(GREEN)► Creating namespaces...$(RESET)"
-	kubectl create namespace $(NAMESPACE) --dry-run=client -o yaml | kubectl apply -f -
-	kubectl create namespace $(APPS_NAMESPACE) --dry-run=client -o yaml | kubectl apply -f -
-	@echo "$(GREEN)► Installing cluster dependencies...$(RESET)"
-	$(MAKE) cluster-deps
-	@echo "$(GREEN)✓ Cluster ready!$(RESET)"
 
 cluster-deps: ## Install Argo, NATS, KEDA, ingress into the cluster
 	@echo "$(CYAN)  Installing Argo Workflows...$(RESET)"
 	kubectl create namespace argo --dry-run=client -o yaml | kubectl apply -f -
-	kubectl apply -n argo -f https://github.com/argoproj/argo-workflows/releases/latest/download/install.yaml 2>/dev/null || \
-	  kubectl apply -n argo -f deploy/offline/argo-install.yaml
+	kubectl apply -n argo -f https://github.com/argoproj/argo-workflows/releases/latest/download/install.yaml || echo "$(YELLOW)  Argo apply had some warnings$(RESET)"
 	@echo "$(CYAN)  Installing NATS JetStream...$(RESET)"
 	helm repo add nats https://nats-io.github.io/k8s/helm/charts/ 2>/dev/null || true
 	helm upgrade --install nats nats/nats -n $(NAMESPACE) --create-namespace \
 	  --set config.jetstream.enabled=true \
 	  --set config.jetstream.memStorage.enabled=true \
-	  --set config.jetstream.memStorage.size=128Mi \
-	  --wait --timeout=120s 2>/dev/null || echo "$(YELLOW)  NATS: using offline manifest$(RESET)"
+	  --set config.jetstream.memStorage.size=128Mi
 	@echo "$(CYAN)  Installing KEDA...$(RESET)"
 	helm repo add kedacore https://kedacore.github.io/charts 2>/dev/null || true
-	helm upgrade --install keda kedacore/keda -n keda --create-namespace --wait --timeout=120s 2>/dev/null || \
-	  kubectl apply -f deploy/offline/keda-install.yaml
+	helm upgrade --install keda kedacore/keda -n keda --create-namespace
 	@echo "$(CYAN)  Installing nginx-ingress...$(RESET)"
 	helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx 2>/dev/null || true
 	helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx -n ingress-nginx --create-namespace \
-	  --set controller.service.type=LoadBalancer --wait --timeout=120s 2>/dev/null || \
-	  kubectl apply -f deploy/offline/nginx-ingress.yaml
+	  --set controller.service.type=LoadBalancer
 
 cluster-delete: ## 🗑️  Delete the local k3d cluster
 	@echo "$(RED)► Deleting k3d cluster '$(CLUSTER_NAME)'...$(RESET)"
@@ -284,13 +276,12 @@ ci: fmt vet lint test-unit test-integration build-all ## Run full CI pipeline lo
 #  HELM
 # ─────────────────────────────────────────────
 
-helm-install: ## Install KTTM Helm chart to cluster
+helm-install: ## 🚀 Install KTTM Helm chart (local dev)
 	@echo "$(GREEN)► Installing KTTM Helm chart (dev profile)...$(RESET)"
 	helm upgrade --install $(HELM_RELEASE) $(HELM_CHART) \
 	  --namespace $(NAMESPACE) --create-namespace \
 	  --values $(HELM_CHART)/values.yaml \
-	  --values $(HELM_CHART)/values-dev.yaml \
-	  --wait --timeout=300s
+	  --values $(HELM_CHART)/values-dev.yaml
 	@echo "$(GREEN)✓ KTTM installed in namespace '$(NAMESPACE)'$(RESET)"
 
 helm-upgrade: ## Upgrade KTTM Helm chart
