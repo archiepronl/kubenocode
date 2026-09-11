@@ -1,0 +1,28 @@
+# KubeNLCode Helm Chart — Dev Profile Overrides
+# These settings override values.yaml for local development.
+
+replicaCount: 1
+
+# Disable high availability features for local dev
+operator:
+  leaderElection: false
+
+# Force images to pull locally if available (for k3d/rancher desktop)
+image:
+  pullPolicy: IfNotPresent
+
+# [PHASE 0] Temporarily use nginx as dummy images until the real apps are built in Phase 1
+api:
+  image:
+    repository: nginxinc/nginx-unprivileged
+    tag: alpine
+
+web:
+  image:
+    repository: nginxinc/nginx-unprivileged
+    tag: alpine
+
+ingress:
+  enabled: true
+  className: nginx
+  host: localhost

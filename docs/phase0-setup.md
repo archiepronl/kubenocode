@@ -38,7 +38,7 @@ In your new GitHub repo → **Settings**:
 Add topics: `kubernetes`, `workflow`, `no-code`, `etl`, `cncf`, `go`, `argo-workflows`, `nats`
 
 ### GitHub Pages (Settings → Pages)
-- Source: `Deploy from a branch` → `gh-pages` branch (will be auto-created by CI)
+- Source: Choose **GitHub Actions** (we will add an automated workflow to deploy our docs later)
 
 ---
 
@@ -58,6 +58,12 @@ Go to **Settings → Secrets and variables → Actions → New repository secret
 3. Scopes: ✅ `write:packages`, ✅ `read:packages`, ✅ `delete:packages`
 4. Generate and copy → paste as `GHCR_TOKEN` secret
 
+**How to get a Gemini API Key:**
+1. Go to Google AI Studio: **https://aistudio.google.com/app/apikey**
+2. Sign in with your Google Account
+3. Click the **"Create API key"** button
+4. Choose an existing Google Cloud project or let it create a new one for you
+5. Copy the generated key → paste as `GEMINI_API_KEY` secret
 ---
 
 ## 🔴 MANUAL STEP 4 — Install Prerequisites (Mac)
@@ -152,9 +158,9 @@ make bootstrap
 | URL | What's there |
 |---|---|
 | `http://localhost:5173` | KubeNLCode SPA (dev server) |
-| `http://localhost:8080` | KubeNLCode via nginx ingress |
-| `http://localhost:8080/argo` | Argo Workflows UI |
-| `http://localhost:9090` | Prometheus metrics |
+| `http://localhost` | KubeNLCode via nginx ingress |
+| `https://localhost:2746` | Argo Workflows UI (run `make dev-portforward`) |
+| `http://localhost:4222` | NATS JetStream (run `make dev-portforward`) |
 | `http://localhost:4317` | OTel collector (gRPC) |
 
 ---
