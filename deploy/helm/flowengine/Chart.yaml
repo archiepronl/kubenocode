@@ -1,0 +1,11 @@
+apiVersion: v2
+name: flowengine
+description: Deployable MVP of the FlowEngine workflow and schema-driven UI platform
+type: application
+version: 0.1.0
+appVersion: 0.1.0
+dependencies:
+  - name: nats
+    version: 1.2.5
+    repository: https://nats-io.github.io/k8s/helm/charts/
+    condition: nats.enabled

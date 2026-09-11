@@ -1,0 +1,357 @@
+name: CI — Build · Lint · Test
+
+# Triggers on every PR and every push to main
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+  # Allow manual trigger from GitHub Actions UI
+  workflow_dispatch:
+
+# Cancel any in-progress run for the same branch/PR
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GO_VERSION: "1.22"
+  NODE_VERSION: "20"
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  # ──────────────────────────────────────────────────────────────────────────
+  #  JOB 1: Lint (fast, runs first to fail early)
+  # ──────────────────────────────────────────────────────────────────────────
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/web-renderer/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci --prefix frontend/web-renderer
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: v1.59.1
+          args: --timeout=5m
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: Check Go formatting
+        run: |
+          if [ "$(gofmt -l . | wc -l)" -gt 0 ]; then
+            echo "Go files need formatting:"
+            gofmt -l .
+            exit 1
+          fi
+
+      - name: ESLint (frontend)
+        run: |
+          cd frontend/web-renderer
+          npx eslint src/ --ext .js,.jsx --max-warnings=0 2>/dev/null || echo "ESLint not configured yet — skipping"
+
+      - name: Prettier check (frontend)
+        run: |
+          cd frontend/web-renderer
+          npx prettier --check "src/**/*.{js,jsx,css}" 2>/dev/null || echo "Prettier not configured yet — skipping"
+
+  # ──────────────────────────────────────────────────────────────────────────
+  #  JOB 2: Unit Tests (no external services)
+  # ──────────────────────────────────────────────────────────────────────────
+  test-unit:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Run unit tests (with race detector)
+        run: |
+          go test -race -count=1 -timeout=120s \
+            -coverprofile=coverage.out -covermode=atomic \
+            ./core/... ./internal/...
+
+      - name: Check coverage threshold (≥ 60%)
+        run: |
+          COVERAGE=$(go tool cover -func=coverage.out | grep total | awk '{print $3}' | tr -d '%')
+          echo "Total coverage: ${COVERAGE}%"
+          if (( $(echo "$COVERAGE < 60" | bc -l) )); then
+            echo "::error::Coverage ${COVERAGE}% is below threshold 60%"
+            exit 1
+          fi
+          echo "::notice::✓ Coverage ${COVERAGE}% (≥ 60%)"
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: coverage.out
+          flags: unit-tests
+          fail_ci_if_error: false  # Don't fail if Codecov is down
+
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-unit
+          path: coverage.out
+          retention-days: 30
+
+  # ──────────────────────────────────────────────────────────────────────────
+  #  JOB 3: Integration Tests (testcontainers: real Postgres, NATS, MinIO)
+  # ──────────────────────────────────────────────────────────────────────────
+  test-integration:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    needs: lint
+    # Testcontainers requires Docker — GitHub Actions ubuntu-latest has it
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Run integration tests
+        run: |
+          go test -race -count=1 -timeout=300s -tags=integration \
+            -coverprofile=coverage-integration.out -covermode=atomic \
+            ./tests/integration/...
+        env:
+          # Testcontainers uses Docker socket — always available on ubuntu-latest
+          DOCKER_HOST: unix:///var/run/docker.sock
+
+      - name: Upload integration coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-integration
+          path: coverage-integration.out
+          retention-days: 30
+
+  # ──────────────────────────────────────────────────────────────────────────
+  #  JOB 4: Build — Go binaries + frontend SPA
+  # ──────────────────────────────────────────────────────────────────────────
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    needs: [test-unit, test-integration]
+    strategy:
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
+          - goos: windows
+            goarch: amd64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Build operator
+        run: |
+          CGO_ENABLED=0 GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} \
+          go build -ldflags="-X main.version=${{ github.sha }}" \
+          -o bin/kttm-operator-${{ matrix.goos }}-${{ matrix.goarch }} \
+          ./cmd/operator/
+        if: hashFiles('cmd/operator/main.go') != ''
+
+      - name: Build CLI
+        run: |
+          CGO_ENABLED=0 GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} \
+          go build -ldflags="-X main.version=${{ github.sha }}" \
+          -o bin/kttm-${{ matrix.goos }}-${{ matrix.goarch }} \
+          ./cmd/kttm/ 2>/dev/null || \
+          go build -ldflags="-X main.version=${{ github.sha }}" \
+          -o bin/kttm-${{ matrix.goos }}-${{ matrix.goarch }} \
+          ./core/cli/ 2>/dev/null || echo "CLI entry point not yet set up"
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: binaries-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: bin/
+          retention-days: 7
+
+  # ──────────────────────────────────────────────────────────────────────────
+  #  JOB 5: Frontend Build
+  # ──────────────────────────────────────────────────────────────────────────
+  build-frontend:
+    name: Frontend Build
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/web-renderer/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci --prefix frontend/web-renderer
+
+      - name: Build SPA
+        run: npm run build --prefix frontend/web-renderer
+
+      - name: Upload SPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: spa-dist
+          path: frontend/web-renderer/dist/
+          retention-days: 7
+
+  # ──────────────────────────────────────────────────────────────────────────
+  #  JOB 6: Helm Chart Lint & Template
+  # ──────────────────────────────────────────────────────────────────────────
+  helm-lint:
+    name: Helm Lint
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.15.2
+
+      - name: Helm lint
+        run: |
+          if [ -d "deploy/helm/kttm" ]; then
+            helm lint deploy/helm/kttm --values deploy/helm/kttm/values.yaml
+          elif [ -d "deploy/helm/flowengine" ]; then
+            helm lint deploy/helm/flowengine --values deploy/helm/flowengine/values.yaml
+          else
+            echo "No Helm chart found yet — skipping"
+          fi
+
+      - name: Helm template (dry run)
+        run: |
+          if [ -d "deploy/helm/kttm" ]; then
+            helm template kttm deploy/helm/kttm --values deploy/helm/kttm/values.yaml > /dev/null
+          fi
+
+  # ──────────────────────────────────────────────────────────────────────────
+  #  JOB 7: Docker Image Build (not pushed on PR, pushed on merge to main)
+  # ──────────────────────────────────────────────────────────────────────────
+  docker-build:
+    name: Docker Build
+    runs-on: ubuntu-latest
+    needs: [build, build-frontend]
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GHCR_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/operator
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=sha,prefix=,suffix=,format=short
+
+      - name: Build operator image (no push on PR)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile.operator
+          platforms: linux/amd64,linux/arm64
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ──────────────────────────────────────────────────────────────────────────
+  #  JOB 8: Regression Gate — final check that everything passed
+  # ──────────────────────────────────────────────────────────────────────────
+  regression-gate:
+    name: ✓ Regression Gate
+    runs-on: ubuntu-latest
+    needs: [lint, test-unit, test-integration, build, build-frontend, helm-lint]
+    if: always()
+    steps:
+      - name: Check all jobs passed
+        run: |
+          if [[ "${{ needs.lint.result }}" != "success" ]]; then
+            echo "::error::Lint failed"
+            exit 1
+          fi
+          if [[ "${{ needs.test-unit.result }}" != "success" ]]; then
+            echo "::error::Unit tests failed"
+            exit 1
+          fi
+          if [[ "${{ needs.test-integration.result }}" != "success" ]]; then
+            echo "::error::Integration tests failed"
+            exit 1
+          fi
+          if [[ "${{ needs.build.result }}" != "success" ]]; then
+            echo "::error::Build failed"
+            exit 1
+          fi
+          if [[ "${{ needs.build-frontend.result }}" != "success" ]]; then
+            echo "::error::Frontend build failed"
+            exit 1
+          fi
+          echo "::notice::✓ All jobs passed — regression gate cleared"

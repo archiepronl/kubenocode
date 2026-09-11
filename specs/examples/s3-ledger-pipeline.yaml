@@ -1,0 +1,164 @@
+---
+# FullStackApplication CRD — Example: Daily S3 Ledger ETL Pipeline
+# This demonstrates the unified schema used by all three user tiers.
+#
+# Tier 1 (Business): AI generates this YAML from natural language
+# Tier 2 (Advanced): Visual canvas exports this YAML
+# Tier 3 (Expert): Written/edited directly
+#
+# Apply to cluster:
+#   kubectl apply -f examples/s3-ledger-pipeline.yaml
+#
+# Validate with CLI (no cluster needed):
+#   flowengine validate examples/s3-ledger-pipeline.yaml
+#
+# Run locally (no cluster needed):
+#   flowengine run examples/s3-ledger-pipeline.yaml
+
+apiVersion: flowengine.io/v1alpha1
+kind: FullStackApplication
+metadata:
+  name: s3-daily-ledger-etl
+  namespace: default
+  labels:
+    flowengine.io/tier: advanced        # Created by Tier 2 visual canvas
+    flowengine.io/template: etl-batch   # Optional: template reference
+  annotations:
+    flowengine.io/description: |
+      Ingests a daily ledger CSV from S3, filters rows with empty phone numbers
+      via a Python transformation, and writes results to PostgreSQL.
+      The output is rendered on a data dashboard via the no-code UI.
+
+spec:
+  # ── Workflow DAG ──────────────────────────────────────────────────────────
+  workflowDag:
+
+    # Node 1: Read daily CSV from S3
+    - id: source-s3-ledger
+      type: connector/s3
+      label: "S3 Daily Ledger"
+      params:
+        bucket: "acme-data-lake"
+        prefix: "ledgers/daily/{{ .Date }}.csv"
+        region: "us-east-1"
+      secretRef: s3-credentials   # References: kubectl create secret generic s3-credentials ...
+      mimeTypeHint: "text/csv"
+      resources:
+        requests:
+          memory: "128Mi"
+          cpu: "100m"
+        limits:
+          memory: "256Mi"
+          cpu: "200m"
+      outputs:
+        - transform-python-filter  # Edge: feeds the Python transform step
+
+    # Node 2: Python transformation — filter empty phone rows
+    - id: transform-python-filter
+      type: script/python
+      label: "Filter Empty Phone Numbers"
+      image: "python:3.12-slim"
+      script: |
+        import sys, csv, io
+
+        input_data = sys.stdin.read()
+        reader = csv.DictReader(io.StringIO(input_data))
+        writer = csv.DictWriter(sys.stdout, fieldnames=reader.fieldnames)
+        writer.writeheader()
+
+        removed = 0
+        for row in reader:
+            if row.get('phone', '').strip():
+                writer.writerow(row)
+            else:
+                removed += 1
+
+        print(f"[transform] Removed {removed} rows with empty phone numbers", file=sys.stderr)
+      resources:
+        requests:
+          memory: "256Mi"
+          cpu: "200m"
+        limits:
+          memory: "512Mi"
+          cpu: "500m"
+      outputs:
+        - sink-postgres-ledger  # Edge: feeds the PostgreSQL sink
+
+    # Node 3: Write cleaned data to PostgreSQL
+    - id: sink-postgres-ledger
+      type: connector/postgres
+      label: "PostgreSQL Ledger Sink"
+      params:
+        query: "COPY ledger_entries FROM STDIN WITH (FORMAT CSV, HEADER TRUE)"
+        database: "analytics"
+        sslMode: "require"
+      secretRef: postgres-credentials  # References: kubectl create secret generic postgres-credentials ...
+      resources:
+        requests:
+          memory: "128Mi"
+          cpu: "100m"
+        limits:
+          memory: "256Mi"
+          cpu: "300m"
+      # No outputs — this is a terminal sink node
+
+  # ── No-Code UI Schema ──────────────────────────────────────────────────────
+  # Tier 1 users interact via this schema-driven form.
+  # The web-renderer SPA renders this dynamically from the ConfigMap (FR-2.2).
+  uiLayoutSchema: |
+    {
+      "type": "form",
+      "title": "Daily S3 Ledger Pipeline",
+      "description": "Ingest, clean, and store the daily ledger file.",
+      "fields": [
+        {
+          "id": "date",
+          "label": "Report Date",
+          "type": "date",
+          "required": true,
+          "placeholder": "YYYY-MM-DD"
+        },
+        {
+          "id": "bucket",
+          "label": "S3 Bucket",
+          "type": "text",
+          "required": true,
+          "default": "acme-data-lake"
+        },
+        {
+          "id": "outputTable",
+          "label": "Output Table Name",
+          "type": "text",
+          "required": true,
+          "default": "ledger_entries"
+        }
+      ],
+      "actions": [
+        {
+          "id": "run-pipeline",
+          "label": "Run Pipeline",
+          "style": "primary",
+          "natsSubject": "flowengine.default.s3-daily-ledger-etl.trigger",
+          "payloadTemplate": {
+            "date": "{{date}}",
+            "bucket": "{{bucket}}",
+            "outputTable": "{{outputTable}}"
+          }
+        }
+      ]
+    }
+
+  # ── GitOps Integration ─────────────────────────────────────────────────────
+  gitOps:
+    repo: "git@github.com:acme-corp/flowengine-workflows.git"
+    branch: "main"
+    path: "workflows/etl/"
+    sshKeySecretRef: gitops-ssh-key
+
+  # ── Execution Configuration ────────────────────────────────────────────────
+  execution:
+    backend: argo
+    serviceAccountName: flowengine-executor
+    ttlSecondsAfterFinished: 7200  # Keep workflow CRD for 2h after completion
+    imagePullSecrets:
+      - name: registry-credentials

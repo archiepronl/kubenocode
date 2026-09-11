@@ -1,0 +1,66 @@
+# Lefthook — Git pre-commit hooks
+# Runs automatically before every `git commit`
+# Install: lefthook install (done by `make bootstrap`)
+# Skip for emergency: git commit --no-verify
+
+pre-commit:
+  parallel: true   # Run all checks in parallel for speed
+
+  commands:
+    # ── Go ──────────────────────────────────────────────────────────────────
+    go-fmt:
+      glob: "*.go"
+      run: gofmt -l {staged_files}
+      fail_text: |
+        Go files need formatting. Run: make fmt
+
+    go-vet:
+      glob: "*.go"
+      run: go vet ./...
+      fail_text: |
+        go vet found issues. Fix them before committing.
+
+    go-lint:
+      glob: "*.go"
+      run: golangci-lint run --fix --timeout=60s {staged_files}
+      fail_text: |
+        golangci-lint found issues. Run: make lint
+
+    # ── Tests (unit only — fast, < 30s) ────────────────────────────────────
+    go-test-unit:
+      glob: "*.go"
+      run: go test -race -count=1 -timeout=60s ./core/... ./internal/...
+      fail_text: |
+        Unit tests failed. Run: make test-unit
+
+    # ── Frontend ────────────────────────────────────────────────────────────
+    frontend-prettier:
+      glob: "frontend/**/*.{js,jsx,css}"
+      run: npx prettier --write {staged_files} 2>/dev/null || true
+
+    # ── Docs / Markdown ─────────────────────────────────────────────────────
+    no-todo-fixme:
+      glob: "*.go"
+      run: |
+        if grep -rn "TODO\|FIXME\|HACK\|XXX" {staged_files} 2>/dev/null | grep -v "_test.go" | grep -v "//nolint"; then
+          echo "Warning: TODO/FIXME comments found. Consider addressing before merge."
+        fi
+      # This is a warning, not a blocker (skip: true to make it blocking)
+
+commit-msg:
+  commands:
+    # Enforce Conventional Commits: feat/fix/docs/chore/ci/test/refactor
+    conventional-commit:
+      run: |
+        MSG=$(cat {1})
+        if ! echo "$MSG" | grep -qE "^(feat|fix|docs|chore|ci|test|refactor|style|perf|revert)(\(.+\))?: .{3,}"; then
+          echo "❌ Commit message must follow Conventional Commits format:"
+          echo "   feat(scope): add new feature"
+          echo "   fix(scope): fix a bug"
+          echo "   docs: update documentation"
+          echo "   chore: update dependencies"
+          echo "   ci: update CI pipeline"
+          echo ""
+          echo "   Got: $MSG"
+          exit 1
+        fi

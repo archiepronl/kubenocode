@@ -1,0 +1,136 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"    # Triggers on: v0.1.0, v1.2.3-rc1, etc.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (e.g. v0.1.0)"
+        required: true
+
+permissions:
+  contents: write      # Create GitHub releases
+  packages: write      # Push to ghcr.io
+  id-token: write      # For OIDC-based attestation (future)
+
+env:
+  REGISTRY: ghcr.io
+  GO_VERSION: "1.22"
+  NODE_VERSION: "20"
+
+jobs:
+  # ─────────────────────────────────────────────
+  #  RELEASE — binaries + images + Helm chart
+  # ─────────────────────────────────────────────
+  release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0    # GoReleaser needs full history for changelog
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Set up QEMU (for multi-arch builds)
+        uses: docker/setup-qemu-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GHCR_TOKEN }}
+
+      - name: Build frontend SPA
+        run: |
+          npm ci --prefix frontend/web-renderer
+          npm run build --prefix frontend/web-renderer
+
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: latest
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Package Helm chart
+        run: |
+          helm package deploy/helm/kttm --version ${{ github.ref_name }} \
+            --app-version ${{ github.ref_name }} \
+            --destination .release/ 2>/dev/null || \
+          helm package deploy/helm/flowengine --version ${{ github.ref_name }} \
+            --destination .release/ 2>/dev/null || \
+          echo "No Helm chart to package yet"
+
+      - name: Upload Helm chart to GitHub Release
+        if: hashFiles('.release/*.tgz') != ''
+        uses: softprops/action-gh-release@v2
+        with:
+          files: .release/*.tgz
+
+  # ─────────────────────────────────────────────
+  #  Docker images with release tags
+  # ─────────────────────────────────────────────
+  docker-release:
+    name: Push Release Docker Images
+    runs-on: ubuntu-latest
+    needs: release
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Log in to ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GHCR_TOKEN }}
+
+      - name: Push operator image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile.operator
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ github.repository }}/operator:${{ github.ref_name }}
+            ${{ env.REGISTRY }}/${{ github.repository }}/operator:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Push BFF image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile.bff
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ github.repository }}/bff:${{ github.ref_name }}
+            ${{ env.REGISTRY }}/${{ github.repository }}/bff:latest
+          cache-from: type=gha

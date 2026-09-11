@@ -1,0 +1,67 @@
+apiVersion: k3d.io/v1alpha4
+kind: Simple
+metadata:
+  # Local development cluster for KTTM
+  # Works on: macOS (Intel + Apple Silicon M1/M2/M3), Linux (x86_64 + arm64), WSL2
+  name: kttm-dev
+
+# 1 server (control-plane) + 3 worker agents for realistic scheduling
+servers: 1
+agents: 3
+
+# K3s v1.30 with ARM64 (Apple Silicon) and AMD64 (Intel/WSL) support
+# Uses auto-detect — k3d picks the right image for your architecture
+image: rancher/k3s:v1.30.2-k3s1
+
+ports:
+  # Main ingress: http://localhost:8080
+  - port: 8080:80
+    nodeFilters:
+      - loadbalancer
+  # TLS ingress (for future HTTPS support)
+  - port: 8443:443
+    nodeFilters:
+      - loadbalancer
+  # NATS port (for direct CLI access during dev)
+  - port: 4222:4222
+    nodeFilters:
+      - server:0
+  # Prometheus metrics scrape
+  - port: 9090:9090
+    nodeFilters:
+      - server:0
+
+options:
+  k3s:
+    extraArgs:
+      # Disable built-in traefik (we use nginx-ingress for full Ingress spec support)
+      - arg: --disable=traefik
+        nodeFilters:
+          - server:0
+      # Disable built-in service load balancer (we use metallb or k3d's own)
+      - arg: --disable=servicelb
+        nodeFilters:
+          - server:0
+      # Enable in-place vertical pod scaling (KTTM-REQ-030)
+      # Requires K8s 1.27+ — available in K3s v1.30
+      - arg: --kube-apiserver-arg=feature-gates=InPlacePodVerticalScaling=true
+        nodeFilters:
+          - server:0
+      # Increase default resource limits for local development
+      - arg: --kube-controller-manager-arg=node-monitor-grace-period=30s
+        nodeFilters:
+          - server:0
+
+  kubeconfig:
+    # Automatically update ~/.kube/config with the cluster context
+    updateDefaultKubeconfig: true
+    # Switch kubectl context to this cluster after creation
+    switchCurrentContext: true
+
+registries:
+  # Create a local registry on port 5001 for k3d image loading
+  # Images pushed here are available to all cluster nodes
+  create:
+    name: kttm-registry
+    host: "0.0.0.0"
+    hostPort: "5001"

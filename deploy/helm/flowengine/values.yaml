@@ -1,0 +1,27 @@
+api:
+  replicaCount: 1
+  image:
+    repository: ghcr.io/example/flowengine-api
+    tag: "0.1.0"
+    pullPolicy: IfNotPresent
+  resources:
+    requests: { cpu: 10m, memory: 32Mi }
+    limits: { cpu: 250m, memory: 128Mi }
+web:
+  replicaCount: 1
+  image:
+    repository: ghcr.io/example/flowengine-web
+    tag: "0.1.0"
+    pullPolicy: IfNotPresent
+  resources:
+    requests: { cpu: 10m, memory: 16Mi }
+    limits: { cpu: 100m, memory: 64Mi }
+nats:
+  enabled: true
+  config:
+    jetstream:
+      enabled: true
+ingress:
+  enabled: false
+  className: nginx
+  host: flowengine.local

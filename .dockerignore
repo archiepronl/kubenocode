@@ -1,0 +1,4 @@
+.git
+frontend/web-renderer/node_modules
+frontend/web-renderer/dist
+**/.DS_Store
