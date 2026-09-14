@@ -30,11 +30,11 @@ import (
 // Env holds all connection strings and addresses for the test infrastructure.
 // Populated by Start* functions. Safe to read after StartAll().
 var Env = struct {
-	PostgresDSN  string
-	NATSUrl      string
-	MinIOUrl     string
-	MinIOUser    string
-	MinIOPass    string
+	PostgresDSN string
+	NATSUrl     string
+	MinIOUrl    string
+	MinIOUser   string
+	MinIOPass   string
 }{}
 
 var (
@@ -117,7 +117,7 @@ func StartNATS(t *testing.T, ctx context.Context) func() {
 	t.Log("testinfra: starting NATS JetStream container...")
 	c, err := nats.RunContainer(ctx,
 		testcontainers.WithImage("nats:2.10-alpine"),
-		nats.WithArgument("jetstream"),
+		nats.WithArgument("js", ""),
 		nats.WithArgument("store_dir", "/tmp/jetstream"),
 		testcontainers.WithWaitStrategy(
 			wait.ForLog("Server is ready").WithStartupTimeout(30*time.Second),

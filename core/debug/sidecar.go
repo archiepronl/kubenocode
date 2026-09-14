@@ -31,11 +31,11 @@ import (
 type EventType string
 
 const (
-	EventLog        EventType = "log"        // Stdout/stderr line from the step container
-	EventPaused     EventType = "paused"     // Execution paused at breakpoint
-	EventPayload    EventType = "payload"    // Raw payload bytes (hex dump or JSON)
-	EventResumed    EventType = "resumed"    // Developer sent "continue"
-	EventCompleted  EventType = "completed"  // Step finished
+	EventLog       EventType = "log"       // Stdout/stderr line from the step container
+	EventPaused    EventType = "paused"    // Execution paused at breakpoint
+	EventPayload   EventType = "payload"   // Raw payload bytes (hex dump or JSON)
+	EventResumed   EventType = "resumed"   // Developer sent "continue"
+	EventCompleted EventType = "completed" // Step finished
 )
 
 // DebugEvent is a single event emitted by the debug sidecar.

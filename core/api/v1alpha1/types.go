@@ -3,8 +3,8 @@
 package v1alpha1
 
 import (
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // +kubebuilder:object:root=true
@@ -75,6 +75,21 @@ type WorkflowNode struct {
 	// +optional
 	Label string `json:"label,omitempty"`
 
+	// GroupID optionally assigns this node to a shared pod group (KTTM-REQ-010).
+	// +optional
+	GroupID string `json:"groupId,omitempty"`
+
+	// PackagingMode controls pod isolation for this node (KTTM-REQ-010).
+	// +kubebuilder:validation:Enum=pod;sidecar;init;binary;crd
+	// +kubebuilder:default=pod
+	// +optional
+	PackagingMode string `json:"packagingMode,omitempty"`
+
+	// Language selects the runtime for inline scripts (KTTM-REQ-012).
+	// +kubebuilder:validation:Enum=python;javascript;bash;r;go;java
+	// +optional
+	Language string `json:"language,omitempty"`
+
 	// Params holds adapter-specific configuration parameters.
 	// These are non-sensitive values (bucket names, table names, filters, etc.).
 	// +optional
@@ -93,13 +108,21 @@ type WorkflowNode struct {
 	Image string `json:"image,omitempty"`
 
 	// Script holds an inline script body for script/* node types.
-	// Supported languages are determined by the Image specified.
+	// Supported languages are determined by the Image or Language fields.
 	// +optional
 	Script string `json:"script,omitempty"`
 
 	// Resources defines CPU and memory limits/requests for the execution container.
 	// +optional
 	Resources *corev1.ResourceRequirements `json:"resources,omitempty"`
+
+	// RetryPolicy configures fault-tolerant retry behaviour (KTTM-REQ-035).
+	// +optional
+	RetryPolicy *RetryPolicy `json:"retryPolicy,omitempty"`
+
+	// Breakpoint enables debugger pause on this node when debug mode is active (KTTM-REQ-014).
+	// +optional
+	Breakpoint bool `json:"breakpoint,omitempty"`
 
 	// Outputs lists the IDs of downstream nodes that receive this node's output envelope.
 	// Defines the directed edges of the DAG.
@@ -118,6 +141,17 @@ type WorkflowNode struct {
 
 	// +optional
 	Tolerations []corev1.Toleration `json:"tolerations,omitempty"`
+}
+
+// RetryPolicy defines how failed nodes are retried (KTTM-REQ-035).
+type RetryPolicy struct {
+	// MaxRetries is the maximum number of retry attempts.
+	MaxRetries int `json:"maxRetries,omitempty"`
+	// Backoff selects the retry interval strategy.
+	// +kubebuilder:validation:Enum=fixed;exponential;linear
+	Backoff string `json:"backoff,omitempty"`
+	// IntervalSeconds is the base retry interval in seconds.
+	IntervalSeconds int `json:"intervalSeconds,omitempty"`
 }
 
 // GitOpsConfig configures GitOps-driven replication of compiled manifests.

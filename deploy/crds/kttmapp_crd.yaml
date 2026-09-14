@@ -1,0 +1,27 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: kttmapps.flowengine.io
+spec:
+  group: flowengine.io
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              properties:
+                appId: {type: string}
+                version: {type: string}
+                uiLayoutSchema: {type: string}
+  scope: Namespaced
+  names:
+    plural: kttmapps
+    singular: kttmapp
+    kind: KattApp
+    shortNames:
+      - kttm

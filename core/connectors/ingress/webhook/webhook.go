@@ -37,11 +37,11 @@ const connectorType = "trigger/webhook"
 // ─────────────────────────────────────────────
 
 const (
-	paramPath        = "path"        // URL path to listen on (e.g., "/webhook/my-flow")
-	paramPort        = "port"        // Port to bind (default: 8090)
-	paramMethod      = "method"      // Allowed HTTP method (default: POST)
-	paramMaxBodyMB   = "maxBodyMb"   // Max request body size in MB (default: 10)
-	envHMACSecret    = "HMAC_SECRET" // HMAC secret from SecretRef for signature verification
+	paramPath      = "path"        // URL path to listen on (e.g., "/webhook/my-flow")
+	paramPort      = "port"        // Port to bind (default: 8090)
+	paramMethod    = "method"      // Allowed HTTP method (default: POST)
+	paramMaxBodyMB = "maxBodyMb"   // Max request body size in MB (default: 10)
+	envHMACSecret  = "HMAC_SECRET" // HMAC secret from SecretRef for signature verification
 )
 
 // ─────────────────────────────────────────────

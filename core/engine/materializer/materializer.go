@@ -138,10 +138,12 @@ func PayloadPath(backend StorageBackend, executionID, nodeID string) string {
 
 // Processor is the interface implemented by all materialization adapters.
 // Each adapter is responsible for reading/transforming a specific mime type.
+// env uses interface{} to avoid a circular import between the adapters and
+// materializer packages; callers should pass *Envelope values.
 type Processor interface {
 	// Process reads from the raw io.Reader and executes the adapter's transformation logic.
-	// It returns an updated Envelope (with any output metadata changes) and the processed output stream.
-	Process(ctx context.Context, env *Envelope, r io.Reader) (*Envelope, io.ReadCloser, error)
+	// It returns an updated Envelope and the processed output stream.
+	Process(ctx context.Context, env interface{}, r io.Reader) (interface{}, io.ReadCloser, error)
 
 	// MimeTypes returns the list of IANA mime type prefixes this adapter handles.
 	MimeTypes() []string
@@ -189,7 +191,14 @@ func (m *Materializer) Materialize(ctx context.Context, env *Envelope, r io.Read
 		// Fallback: passthrough — bytes flow unchanged
 		return env, io.NopCloser(r), nil
 	}
-	return adapter.Process(ctx, env, r)
+	out, rc, err := adapter.Process(ctx, env, r)
+	if err != nil {
+		return nil, nil, err
+	}
+	if outEnv, ok := out.(*Envelope); ok {
+		return outEnv, rc, nil
+	}
+	return env, rc, nil
 }
 
 // selectAdapter finds the first registered adapter that handles the given mimeType.

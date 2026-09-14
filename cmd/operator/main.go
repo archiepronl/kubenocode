@@ -29,7 +29,7 @@ import (
 	v1alpha1 "github.com/kubeworkflow/flowengine/core/api/v1alpha1"
 	"github.com/kubeworkflow/flowengine/core/engine"
 	"github.com/kubeworkflow/flowengine/core/linter"
-	"github.com/kubeworkflow/flowengine/internal/workflow"
+	workflow "github.com/kubeworkflow/flowengine/internal/workflow"
 )
 
 var (

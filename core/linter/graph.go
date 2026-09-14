@@ -348,8 +348,8 @@ func (l *GraphLinter) checkIsolatedNodes(dag []v1alpha1.WorkflowNode, idx map[st
 
 	var findings []LintFinding
 	for _, node := range dag {
-		isSource := !referenced[node.ID]  // no incoming edges
-		isSink := len(node.Outputs) == 0  // no outgoing edges
+		isSource := !referenced[node.ID] // no incoming edges
+		isSink := len(node.Outputs) == 0 // no outgoing edges
 		if isSource && isSink && len(dag) > 1 {
 			findings = append(findings, LintFinding{
 				Severity: SeverityWarning,

@@ -1,0 +1,106 @@
+apiVersion: skaffold/v4beta11
+kind: Config
+metadata:
+  name: kttm-local-dev
+
+# ─────────────────────────────────────────────────────────────────
+#  BUILD — images stay in the K3d local registry, never pushed to cloud
+# ─────────────────────────────────────────────────────────────────
+build:
+  local:
+    push: false                      # keeps images entirely local inside K3d
+    useBuildkit: true                # faster multi-layer caching
+    concurrency: 2                   # build operator + server in parallel on M2
+
+  artifacts:
+    # Kubernetes Operator
+    - image: kttm-registry.localhost:5001/kttm-operator
+      context: .
+      docker:
+        dockerfile: cmd/operator/Dockerfile
+      sync:
+        # Hot-sync Go source without full rebuild when possible
+        infer:
+          - "**/*.go"
+
+    # API / BFF Server
+    - image: kttm-registry.localhost:5001/kttm-server
+      context: .
+      docker:
+        dockerfile: cmd/server/Dockerfile
+      sync:
+        infer:
+          - "**/*.go"
+
+    # Web Frontend (Vite)
+    - image: kttm-registry.localhost:5001/kttm-web
+      context: frontend/web-renderer
+      docker:
+        dockerfile: Dockerfile
+      sync:
+        infer:
+          - "**/*.js"
+          - "**/*.css"
+          - "**/*.html"
+
+# ─────────────────────────────────────────────────────────────────
+#  MANIFESTS — what to deploy into the cluster on each build
+# ─────────────────────────────────────────────────────────────────
+manifests:
+  rawYaml:
+    - deploy/crds/kttmapp_crd.yaml      # CRD must come first
+    - deploy/rbac/admin-user.yaml       # Admin ServiceAccount
+    - deploy/operator/deployment.yaml   # Operator deployment
+    - deploy/server/deployment.yaml     # API server deployment
+    - deploy/web/deployment.yaml        # Web frontend deployment
+    - deploy/ingress/ingress.yaml       # NGINX Ingress rules
+
+# ─────────────────────────────────────────────────────────────────
+#  DEPLOY — kubectl apply (no Helm in dev loop, too slow)
+# ─────────────────────────────────────────────────────────────────
+deploy:
+  kubectl:
+    defaultNamespace: kttm-system
+
+# ─────────────────────────────────────────────────────────────────
+#  PROFILES
+# ─────────────────────────────────────────────────────────────────
+profiles:
+  # ── local (default for 'make dev') ──────────────────────────────
+  - name: local
+    activation:
+      - command: dev
+      - command: run
+    build:
+      local:
+        push: false
+    deploy:
+      kubectl:
+        defaultNamespace: kttm-system
+
+  # ── ci (used by GitHub Actions for regression gate) ─────────────
+  # On CI, images are built with docker buildx and pushed to GHCR.
+  # The local k3d registry is not used.
+  - name: ci
+    build:
+      local:
+        push: true
+    deploy:
+      kubectl:
+        defaultNamespace: kttm-system
+
+# ─────────────────────────────────────────────────────────────────
+#  PORT FORWARD — auto port-forward when running 'skaffold dev'
+# ─────────────────────────────────────────────────────────────────
+portForward:
+  - resourceType: Service
+    resourceName: kttm-server
+    namespace: kttm-system
+    port: 8080
+    localPort: 8080
+
+  - resourceType: Service
+    resourceName: nats
+    namespace: kttm-system
+    port: 4222
+    localPort: 4222

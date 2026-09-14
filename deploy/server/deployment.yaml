@@ -1,0 +1,37 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kttm-server
+  namespace: kttm-system
+  labels:
+    app: kttm-server
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kttm-server
+  template:
+    metadata:
+      labels:
+        app: kttm-server
+    spec:
+      containers:
+        - name: server
+          image: kttm-registry.localhost:5001/kttm-server
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+              name: http
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kttm-server
+  namespace: kttm-system
+spec:
+  selector:
+    app: kttm-server
+  ports:
+    - protocol: TCP
+      port: 8080
+      targetPort: 8080

@@ -6,16 +6,18 @@
 //   - OTLP exporter configuration (Jaeger, Tempo, or any OTLP-compatible backend)
 //
 // Implements spec Section 4 (Q2 2028 roadmap):
-//   "Embed an OpenTelemetry agent within the execution runtime. Track processing
-//    times, internal mutations, and file transfers as single trace IDs whenever an
-//    unstructured payload moves through a workflow."
+//
+//	"Embed an OpenTelemetry agent within the execution runtime. Track processing
+//	 times, internal mutations, and file transfers as single trace IDs whenever an
+//	 unstructured payload moves through a workflow."
 //
 // Metric definitions (NFR telemetry targets):
-//   flowengine_node_duration_seconds  — histogram (p50/p99 step execution time)
-//   flowengine_node_memory_ratio      — gauge (mem used / mem limit)
-//   flowengine_node_cpu_throttle_ratio— gauge (CPU throttled / CPU limit)
-//   flowengine_envelope_payload_bytes — histogram (payload size distribution)
-//   flowengine_nats_queue_depth       — gauge (NATS consumer pending count)
+//
+//	flowengine_node_duration_seconds  — histogram (p50/p99 step execution time)
+//	flowengine_node_memory_ratio      — gauge (mem used / mem limit)
+//	flowengine_node_cpu_throttle_ratio— gauge (CPU throttled / CPU limit)
+//	flowengine_envelope_payload_bytes — histogram (payload size distribution)
+//	flowengine_nats_queue_depth       — gauge (NATS consumer pending count)
 package observability
 
 import (
@@ -195,12 +197,12 @@ func registerInstruments(meter metric.Meter) (*Instruments, error) {
 		metric.WithDescription("Distribution of raw payload sizes routed through the envelope system"),
 		metric.WithUnit("By"),
 		metric.WithExplicitBucketBoundaries(
-			1<<10,    // 1KB
-			1<<20,    // 1MB
-			10<<20,   // 10MB
-			100<<20,  // 100MB
-			1<<30,    // 1GB
-			10<<30,   // 10GB
+			1<<10,   // 1KB
+			1<<20,   // 1MB
+			10<<20,  // 10MB
+			100<<20, // 100MB
+			1<<30,   // 1GB
+			10<<30,  // 10GB
 		),
 	)
 	if err != nil {

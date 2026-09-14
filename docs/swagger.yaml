@@ -1,0 +1,64 @@
+basePath: /
+info:
+  contact: {}
+  description: Core Execution Engine API for managing the FlowEngine graph
+  title: KubeWorkFlow API
+  version: "1.0"
+paths:
+  /api/schema:
+    get:
+      description: Returns the dynamic UI layout schema for rendering the intake form
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Get Layout Schema
+  /api/workflows:
+    post:
+      consumes:
+      - application/json
+      description: Validates and accepts a new workflow definition for execution
+      parameters:
+      - description: Workflow Definition
+        in: body
+        name: definition
+        required: true
+        schema:
+          additionalProperties: true
+          type: object
+      produces:
+      - application/json
+      responses:
+        "202":
+          description: Accepted
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "422":
+          description: Unprocessable Entity
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Start Workflow
+  /healthz:
+    get:
+      description: Returns the operational status of the API server
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Health check
+swagger: "2.0"

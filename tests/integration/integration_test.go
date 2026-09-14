@@ -16,7 +16,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/kubeworkflow/kttm/tests/testinfra"
+	"github.com/kubeworkflow/flowengine/tests/testinfra"
 )
 
 // TestMain starts shared infrastructure once for all integration tests.

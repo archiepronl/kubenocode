@@ -15,15 +15,10 @@ package v1alpha1
 import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 )
 
-// ─────────────────────────────────────────────
-//  Group / Version
-// ─────────────────────────────────────────────
-
-var (
-	GroupVersion  = schema.GroupVersion{Group: "kttm.io", Version: "v1alpha1"}
+// KttmApp kind constants used by the controller and webhooks.
+const (
 	Kind          = "KttmApp"
 	ConnectorKind = "KttmConnector"
 	PluginKind    = "KttmUIPlugin"
@@ -120,18 +115,18 @@ type KttmRole struct {
 type KttmPermission string
 
 const (
-	PermAppCreate   KttmPermission = "app:create"
-	PermAppModify   KttmPermission = "app:modify"
-	PermAppDelete   KttmPermission = "app:delete"
-	PermAppDebug    KttmPermission = "app:debug"
-	PermAppExport   KttmPermission = "app:export"
-	PermAppExecute  KttmPermission = "app:execute"
-	PermRBACManage  KttmPermission = "rbac:manage"
-	PermInfraInstall  KttmPermission = "infra:install"
-	PermInfraUpgrade  KttmPermission = "infra:upgrade"
-	PermBundleImport  KttmPermission = "bundle:import"
-	PermAuditView     KttmPermission = "audit:view"
-	PermCostView      KttmPermission = "cost:view"
+	PermAppCreate    KttmPermission = "app:create"
+	PermAppModify    KttmPermission = "app:modify"
+	PermAppDelete    KttmPermission = "app:delete"
+	PermAppDebug     KttmPermission = "app:debug"
+	PermAppExport    KttmPermission = "app:export"
+	PermAppExecute   KttmPermission = "app:execute"
+	PermRBACManage   KttmPermission = "rbac:manage"
+	PermInfraInstall KttmPermission = "infra:install"
+	PermInfraUpgrade KttmPermission = "infra:upgrade"
+	PermBundleImport KttmPermission = "bundle:import"
+	PermAuditView    KttmPermission = "audit:view"
+	PermCostView     KttmPermission = "cost:view"
 )
 
 // AllPermissions is the master permission list presented in the Admin checkbox matrix.
@@ -185,65 +180,6 @@ type WorkflowDAGSpec struct {
 
 	// Edges defines the directed connections between nodes.
 	Edges []DAGEdge `json:"edges,omitempty"`
-}
-
-// WorkflowNode represents a single executable step in the DAG.
-type WorkflowNode struct {
-	// ID is the unique node identifier within this KttmApp.
-	ID string `json:"id"`
-
-	// Type identifies the connector implementation (e.g., "connector/s3", "script/python").
-	Type string `json:"type"`
-
-	// Label is the human-readable display name shown on the canvas.
-	Label string `json:"label,omitempty"`
-
-	// GroupID optionally assigns this node to a shared pod group (KTTM-REQ-010).
-	GroupID string `json:"groupId,omitempty"`
-
-	// PackagingMode controls pod isolation for this node (KTTM-REQ-010).
-	// +kubebuilder:validation:Enum=pod;sidecar;init;binary;crd
-	// +kubebuilder:default=pod
-	PackagingMode string `json:"packagingMode,omitempty"`
-
-	// Image is the container image for this step. Auto-set by NodeBuilder for script nodes.
-	Image string `json:"image,omitempty"`
-
-	// Script is inline code for script/* node types (KTTM-REQ-012).
-	Script string `json:"script,omitempty"`
-
-	// Language selects the runtime for inline scripts (KTTM-REQ-012).
-	// +kubebuilder:validation:Enum=python;javascript;bash;r;go;java
-	Language string `json:"language,omitempty"`
-
-	// Params are non-sensitive configuration values for the connector.
-	Params map[string]string `json:"params,omitempty"`
-
-	// SecretRef is the name of a Kubernetes Secret containing credentials (KTTM-NFR-002).
-	SecretRef string `json:"secretRef,omitempty"`
-
-	// Resources defines CPU/memory requests and limits (KTTM-REQ-034).
-	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
-
-	// RetryPolicy configures fault-tolerant retry behaviour (KTTM-REQ-035).
-	RetryPolicy *RetryPolicy `json:"retryPolicy,omitempty"`
-
-	// Breakpoint enables debugger pause on this node when debug mode is active (KTTM-REQ-014).
-	Breakpoint bool `json:"breakpoint,omitempty"`
-
-	// Outputs lists node IDs that receive this node's output envelope.
-	Outputs []string `json:"outputs,omitempty"`
-
-	// MimeTypeHint optionally declares the expected output MIME type.
-	MimeTypeHint string `json:"mimeTypeHint,omitempty"`
-}
-
-// RetryPolicy defines how failed nodes are retried (KTTM-REQ-035).
-type RetryPolicy struct {
-	MaxRetries int    `json:"maxRetries,omitempty"`
-	// +kubebuilder:validation:Enum=fixed;exponential;linear
-	Backoff    string `json:"backoff,omitempty"`
-	RetryOn    string `json:"retryOn,omitempty"` // e.g., "error,transientError"
 }
 
 // ParallelGroup defines a fan-out execution group (KTTM-REQ-023).
@@ -400,11 +336,11 @@ type LinterResult struct {
 
 // ScanResult summarises the Trivy image CVE scan (KTTM-REQ-046).
 type ScanResult struct {
-	Clean       bool   `json:"clean"`
-	Critical    int    `json:"critical"`
-	High        int    `json:"high"`
-	Medium      int    `json:"medium"`
-	ReportURL   string `json:"reportUrl,omitempty"`
+	Clean     bool   `json:"clean"`
+	Critical  int    `json:"critical"`
+	High      int    `json:"high"`
+	Medium    int    `json:"medium"`
+	ReportURL string `json:"reportUrl,omitempty"`
 }
 
 // ─────────────────────────────────────────────

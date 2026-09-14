@@ -1,0 +1,37 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kttm-web
+  namespace: kttm-system
+  labels:
+    app: kttm-web
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kttm-web
+  template:
+    metadata:
+      labels:
+        app: kttm-web
+    spec:
+      containers:
+        - name: web
+          image: kttm-registry.localhost:5001/kttm-web
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 80
+              name: http
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kttm-web
+  namespace: kttm-system
+spec:
+  selector:
+    app: kttm-web
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 80

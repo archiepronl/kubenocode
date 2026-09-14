@@ -141,11 +141,11 @@ func validateCmd(args []string) error {
 
 	// Scaffold: simulate a clean result
 	type mockResult struct {
-		File     string      `json:"file"`
-		Valid    bool        `json:"valid"`
-		Errors   []string    `json:"errors"`
-		Warnings []string    `json:"warnings"`
-		At       time.Time   `json:"validatedAt"`
+		File     string    `json:"file"`
+		Valid    bool      `json:"valid"`
+		Errors   []string  `json:"errors"`
+		Warnings []string  `json:"warnings"`
+		At       time.Time `json:"validatedAt"`
 	}
 
 	result := mockResult{
@@ -293,7 +293,7 @@ func versionCmd() error {
 // ─────────────────────────────────────────────
 
 func printUsage() {
-	fmt.Println(`flowengine — Cloud-Native Workflow & No-Code App Engine CLI
+	fmt.Print(`flowengine — Cloud-Native Workflow & No-Code App Engine CLI
 
 USAGE:
   flowengine <command> [flags] [arguments]

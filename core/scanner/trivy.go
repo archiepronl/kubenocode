@@ -91,9 +91,9 @@ type ScanResult struct {
 
 // CVEFinding represents a single vulnerability entry.
 type CVEFinding struct {
-	ID          string `json:"id"`          // e.g., CVE-2024-12345
-	Severity    string `json:"severity"`    // CRITICAL | HIGH | MEDIUM | LOW
-	Package     string `json:"package"`     // e.g., openssl
+	ID          string `json:"id"`       // e.g., CVE-2024-12345
+	Severity    string `json:"severity"` // CRITICAL | HIGH | MEDIUM | LOW
+	Package     string `json:"package"`  // e.g., openssl
 	Version     string `json:"version"`
 	FixedIn     string `json:"fixedIn,omitempty"`
 	Description string `json:"description,omitempty"`

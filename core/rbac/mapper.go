@@ -118,11 +118,12 @@ func (m *Mapper) HasPermission(ctx context.Context, p Principal, app *kttmv1.Ktt
 // whether a principal is allowed to perform a KTTM verb on a KTTM resource.
 //
 // KTTM permissions are mapped to K8s verbs on a custom API resource:
-//   app:create  → "create"  on resource "kttmapps"
-//   app:modify  → "update"  on resource "kttmapps"
-//   app:debug   → "get"     on resource "kttmapps/debug"
-//   rbac:manage → "create"  on resource "kttmrolebindings"
-//   etc.
+//
+//	app:create  → "create"  on resource "kttmapps"
+//	app:modify  → "update"  on resource "kttmapps"
+//	app:debug   → "get"     on resource "kttmapps/debug"
+//	rbac:manage → "create"  on resource "kttmrolebindings"
+//	etc.
 func (m *Mapper) checkK8sAccess(ctx context.Context, p Principal, perm string) (bool, error) {
 	verb, resource := kttmPermToK8s(perm)
 

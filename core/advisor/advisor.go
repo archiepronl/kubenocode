@@ -32,19 +32,19 @@ import (
 // NodeMetrics represents a point-in-time snapshot of a workflow node's resource usage.
 // Populated by querying Prometheus (or ClickHouse for historical analysis).
 type NodeMetrics struct {
-	NodeID       string    `json:"nodeId"`
-	WorkflowID   string    `json:"workflowId"`
-	Namespace    string    `json:"namespace"`
-	CPUPercent   float64   `json:"cpuPercent"`   // % of CPU limit used
-	MemMB        float64   `json:"memMb"`        // Memory used in MB
-	MemLimitMB   float64   `json:"memLimitMb"`   // Memory limit in MB
-	MemPercent   float64   `json:"memPercent"`   // % of memory limit used
-	DurationMs   int64     `json:"durationMs"`   // Average step duration (last 5m)
-	P99DurationMs int64    `json:"p99DurationMs"` // p99 step duration (last 5m)
-	ErrorRate    float64   `json:"errorRate"`    // % of executions that errored
-	QueueDepth   int64     `json:"queueDepth"`   // NATS queue depth (if applicable)
-	PayloadSizeMB float64  `json:"payloadSizeMb"` // Average payload size
-	SampledAt    time.Time `json:"sampledAt"`
+	NodeID        string    `json:"nodeId"`
+	WorkflowID    string    `json:"workflowId"`
+	Namespace     string    `json:"namespace"`
+	CPUPercent    float64   `json:"cpuPercent"`    // % of CPU limit used
+	MemMB         float64   `json:"memMb"`         // Memory used in MB
+	MemLimitMB    float64   `json:"memLimitMb"`    // Memory limit in MB
+	MemPercent    float64   `json:"memPercent"`    // % of memory limit used
+	DurationMs    int64     `json:"durationMs"`    // Average step duration (last 5m)
+	P99DurationMs int64     `json:"p99DurationMs"` // p99 step duration (last 5m)
+	ErrorRate     float64   `json:"errorRate"`     // % of executions that errored
+	QueueDepth    int64     `json:"queueDepth"`    // NATS queue depth (if applicable)
+	PayloadSizeMB float64   `json:"payloadSizeMb"` // Average payload size
+	SampledAt     time.Time `json:"sampledAt"`
 }
 
 // ─────────────────────────────────────────────
@@ -66,16 +66,16 @@ type Advice struct {
 	Severity  AdviceSeverity `json:"severity"`
 	Category  string         `json:"category"` // "memory", "cpu", "throughput", "logic", "cost"
 	Title     string         `json:"title"`
-	Message   string         `json:"message"`   // Plain-English recommendation shown in the UI
-	Action    string         `json:"action"`    // Specific suggested change
+	Message   string         `json:"message"` // Plain-English recommendation shown in the UI
+	Action    string         `json:"action"`  // Specific suggested change
 	Timestamp time.Time      `json:"timestamp"`
 }
 
 // AdvisorReport groups all advice for a single analysis run.
 type AdvisorReport struct {
-	WorkflowID string    `json:"workflowId"`
-	Namespace  string    `json:"namespace"`
-	Advice     []Advice  `json:"advice"`
+	WorkflowID  string    `json:"workflowId"`
+	Namespace   string    `json:"namespace"`
+	Advice      []Advice  `json:"advice"`
 	GeneratedAt time.Time `json:"generatedAt"`
 }
 

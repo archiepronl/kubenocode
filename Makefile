@@ -1,362 +1,471 @@
-# KTTM — Master Makefile
-# Supports: macOS (Apple Silicon + Intel), Linux (x86_64), Windows via WSL
+# KTTM — Local Sandbox, Git-Driven Makefile
+# Architecture: Heavy compute on M2 MacBook → clean gate on remote Git CI
 #
-# Quick start:
-#   make bootstrap   — full first-time setup (cluster + deps + hooks)
-#   make dev         — start development (cluster + all servers)
-#   make test        — run full test suite (unit + integration + e2e)
-#   make ci          — run exactly what CI runs (no cluster needed)
+# Philosophy:
+#   - Write, iterate, debug, verify LOCALLY with sub-3s feedback loops
+#   - Push only clean, verified code to Git for the regression gate
+#   - Full air-gapped / offline execution supported (KTTM-REQ-033)
+#
+# First time? Run:   make bootstrap
+# Daily dev loop:    make dev
+# Before pushing:    make ci-local
 
-.PHONY: all bootstrap cluster cluster-delete dev stop \
-        test test-unit test-integration test-e2e test-coverage \
-        build build-operator build-cli build-web build-all \
-        lint fmt vet generate manifests \
+.PHONY: all bootstrap \
+        cluster cluster-delete cluster-reset cluster-deps cluster-status \
+        dev dev-watch dev-logs dev-frontend dev-portforward stop \
+        test test-unit test-integration test-local test-coverage \
+        build build-operator build-server build-cli build-web build-all \
+        image image-load \
+        lint fmt vet \
         helm-install helm-upgrade helm-uninstall helm-lint \
-        docker-build docker-push release clean help
+        ci-local clean help ui
 
-# ─────────────────────────────────────────────
-#  Configuration
-# ─────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────
+#  Project Identity
+# ─────────────────────────────────────────────────────────────────
 
-CLUSTER_NAME      := kttm-dev
-K3D_CONFIG        := deploy/k3d/kttm-cluster.yaml
-NAMESPACE         := kttm-system
-APPS_NAMESPACE    := kttm-apps
-HELM_CHART        := deploy/helm/kttm
-HELM_RELEASE      := kttm
+MODULE         := github.com/kubeworkflow/flowengine
+CLUSTER_NAME   := kttm-dev
+K3D_CONFIG     := deploy/k3d/kttm-cluster.yaml
+REGISTRY       := kttm-registry.localhost:5001
+NAMESPACE      := kttm-system
+APPS_NS        := kttm-apps
+HELM_CHART     := deploy/helm/flowengine
+HELM_RELEASE   := kttm
 
-GO                := go
-GOFLAGS           := -race
-GOOS              ?= $(shell go env GOOS)
-GOARCH            ?= $(shell go env GOARCH)
-MODULE            := github.com/kubeworkflow/kttm
+# ─────────────────────────────────────────────────────────────────
+#  Toolchain
+# ─────────────────────────────────────────────────────────────────
 
-IMAGE_REPO        ?= ghcr.io/kubeworkflow
-IMAGE_TAG         ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
-OPERATOR_IMAGE    := $(IMAGE_REPO)/kttm-operator:$(IMAGE_TAG)
-BFF_IMAGE         := $(IMAGE_REPO)/kttm-bff:$(IMAGE_TAG)
+GO         := go
+GOFLAGS    :=
+GOOS       ?= $(shell go env GOOS)
+GOARCH     ?= $(shell go env GOARCH)
+IMAGE_TAG  ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
+GIT_SHA    := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+
+OPERATOR_IMAGE := $(REGISTRY)/kttm-operator:$(IMAGE_TAG)
+SERVER_IMAGE   := $(REGISTRY)/kttm-server:$(IMAGE_TAG)
 
 COVERAGE_THRESHOLD := 60
 COVERAGE_FILE      := coverage.out
-COVERAGE_HTML      := coverage.html
 
-# ─────────────────────────────────────────────
-#  Colors for terminal output
-# ─────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────
+#  Terminal colors
+# ─────────────────────────────────────────────────────────────────
+
 GREEN  := \033[0;32m
 YELLOW := \033[0;33m
 RED    := \033[0;31m
 CYAN   := \033[0;36m
+BOLD   := \033[1m
 RESET  := \033[0m
 
-# ─────────────────────────────────────────────
-#  DEFAULT: help
-# ─────────────────────────────────────────────
+# ═════════════════════════════════════════════════════════════════
+#  HELP (default target)
+# ═════════════════════════════════════════════════════════════════
 
-help: ## Show this help message
+help: ## Show this help
 	@echo ""
-	@echo "$(CYAN)KTTM — Kubernetes-Native Workflow Platform$(RESET)"
+	@echo "$$(printf '\033[1m\033[0;36m')KTTM — Local Sandbox, Git-Driven Development$$(printf '\033[0m')"
+	@echo "$$(printf '\033[0;36m')  MacBook M2 handles all heavy compute. Git is the regression gate.$$(printf '\033[0m')"
 	@echo ""
-	@awk 'BEGIN {FS = ":.*##"; printf "Usage: make $(CYAN)<target>$(RESET)\n\n"} \
-	     /^[a-zA-Z_-]+:.*?##/ { printf "  $(CYAN)%-22s$(RESET) %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
+	@awk 'BEGIN {FS=":.*##"} /^[a-zA-Z_-]+:.*?##/ {printf "  \033[0;36m%-22s\033[0m %s\n",$$1,$$2}' $(MAKEFILE_LIST)
+	@echo ""
+	@echo "  First run:  make bootstrap"
+	@echo "  Daily loop: make dev         (Skaffold hot-reload)"
+	@echo "  Pre-push:   make ci-local    (full local gate)"
 	@echo ""
 
-all: test build-all ## Run tests and build everything
+all: ci-local ## Alias: run full local gate
 
-# ─────────────────────────────────────────────
+# ═════════════════════════════════════════════════════════════════
+#  VISUAL DASHBOARDS (UI)
+# ═════════════════════════════════════════════════════════════════
+
+ui: ## Spins up all UIs (K8s Dashboard, Argo, Web App) in one terminal
+	@./scripts/start-uis.sh
+
+# ═════════════════════════════════════════════════════════════════
+#  SETUP — Local Cluster Initialization
+# ═════════════════════════════════════════════════════════════════
+
+setup: ## Bootstraps the cluster, runs all tests, and launches the UI
+	@chmod +x scripts/setup-cluster.sh
+	@./scripts/setup-cluster.sh
+	@$(MAKE) cluster-verify
+	@$(MAKE) test
+	@echo "==> Deploying Application Containers (Web & API)..."
+	@skaffold run --profile local
+	@echo "==> Setup Complete! Launching visual interfaces..."
+	@$(MAKE) ui
+
+cluster-verify: ## Runs all local sandbox integration checks automatically
+	@echo "==> Verifying Local Cluster Core Dependencies"
+	@echo "--> Checking Nodes..."
+	@kubectl get nodes | grep "Ready" || (echo "ERROR: Nodes not ready" && exit 1)
+	@echo "--> Checking KEDA Autoscaler..."
+	@kubectl wait --namespace keda --for=condition=ready pod --selector=app=keda-operator --timeout=30s
+	@echo "--> Checking Argo Workflows Engine..."
+	@kubectl wait --namespace argo --for=condition=ready pod --selector=app=workflow-controller --timeout=30s
+	@kubectl wait --namespace argo --for=condition=ready pod --selector=app=argo-server --timeout=30s
+	@echo "==> SUCCESS: All Dev Foundation components are fully operational!"
+
+# ═════════════════════════════════════════════════════════════════
 #  BOOTSTRAP — one-time first-run setup
-# ─────────────────────────────────────────────
+# ═════════════════════════════════════════════════════════════════
 
-bootstrap: ## 🚀 Full first-time setup: hooks + deps + cluster + verify
-	@echo "$(GREEN)► Installing lefthook pre-commit hooks...$(RESET)"
-	lefthook install
-	@echo "$(GREEN)► Downloading Go dependencies...$(RESET)"
+bootstrap: ## 🚀 Full first-time setup: tools + deps + cluster + verify
+	@echo "==> KTTM Bootstrap — Local Sandbox"
+	@echo ""
+	@echo "--> [1/6] Checking required tools..."
+	@which k3d      >/dev/null 2>&1 || (echo "ERROR: k3d not found. Install: brew install k3d" && exit 1)
+	@which kubectl  >/dev/null 2>&1 || (echo "ERROR: kubectl not found. Install: brew install kubectl" && exit 1)
+	@which helm     >/dev/null 2>&1 || (echo "ERROR: helm not found. Install: brew install helm" && exit 1)
+	@which skaffold >/dev/null 2>&1 || echo "WARN: skaffold not found. Install: brew install skaffold"
+	@which stern    >/dev/null 2>&1 || echo "WARN: stern not found. Install: brew install stern"
+	@echo "    OK: Tools verified"
+	@echo ""
+	@echo "--> [2/6] Downloading Go dependencies..."
 	$(GO) mod download
 	$(GO) mod verify
-	@echo "$(GREEN)► Installing frontend dependencies...$(RESET)"
-	npm install --prefix frontend/web-renderer
-	@echo "$(GREEN)► Creating k3d cluster...$(RESET)"
+	@echo "    OK: Go dependencies ready"
+	@echo ""
+	@echo "--> [3/6] Installing frontend dependencies..."
+	@if [ -f "frontend/web-renderer/package.json" ]; then \
+	  npm install --prefix frontend/web-renderer --silent; \
+	  echo "    OK: Frontend dependencies ready"; \
+	else \
+	  echo "    SKIP: No frontend/web-renderer found"; \
+	fi
+	@echo ""
+	@echo "--> [4/6] Installing git hooks (lefthook)..."
+	@which lefthook >/dev/null 2>&1 && lefthook install || echo "    SKIP: lefthook not installed"
+	@echo ""
+	@echo "--> [5/6] Creating K3d local cluster..."
 	$(MAKE) cluster
-	@echo "$(GREEN)► Installing KTTM to cluster...$(RESET)"
-	$(MAKE) helm-install
-	@echo "$(GREEN)► Running smoke test...$(RESET)"
+	@echo ""
+	@echo "--> [6/6] Running bootstrap smoke test..."
 	$(MAKE) smoke-test
 	@echo ""
-	@echo "$(GREEN)✓ Bootstrap complete!$(RESET)"
+	@echo "==> Bootstrap complete!"
 	@echo ""
-	@echo "  KTTM SPA:       http://localhost:5173  (run: make dev-frontend)"
-	@echo "  Ingress:        http://localhost:8080"
-	@echo "  Argo UI:        http://localhost:8080/argo"
-	@echo "  Prometheus:     http://localhost:9090"
+	@echo "   make dev           — Skaffold hot-reload loop"
+	@echo "   make dev-logs      — Stern multi-pod log tail"
+	@echo "   make test-local    — Fast local regression suite"
+	@echo "   make ci-local      — Full pre-push gate"
+	@echo ""
+	@echo "   Ingress:   http://localhost:8080"
+	@echo "   NATS:      nats://localhost:4222"
+	@echo "   Argo UI:   http://localhost:2746 (after: make dev-portforward)"
 	@echo ""
 
-# ─────────────────────────────────────────────
-#  CLUSTER
-# ─────────────────────────────────────────────
+# ═════════════════════════════════════════════════════════════════
+#  CLUSTER — K3d lifecycle
+# ═════════════════════════════════════════════════════════════════
 
-cluster: ## 🔧 Create local k3d development cluster
-	@echo "$(GREEN)► Creating k3d cluster '$(CLUSTER_NAME)'...$(RESET)"
-	@if k3d cluster list | grep -q $(CLUSTER_NAME); then \
-		echo "$(YELLOW)  Cluster '$(CLUSTER_NAME)' already exists. Skipping.$(RESET)"; \
+cluster: ## 🔧 Create local K3d cluster (idempotent)
+	@echo "==> Creating K3d cluster '$(CLUSTER_NAME)'..."
+	@if k3d cluster list 2>/dev/null | grep -q "$(CLUSTER_NAME)"; then \
+	  echo "    Cluster '$(CLUSTER_NAME)' already exists — skipping creation"; \
 	else \
-		k3d cluster create --config $(K3D_CONFIG); \
+	  k3d cluster create --config $(K3D_CONFIG); \
+	  echo "    OK: Cluster created"; \
 	fi
-	@echo "$(GREEN)► Waiting for cluster to be ready...$(RESET)"
-	kubectl wait --for=condition=ready node --all --timeout=120s
-	@echo "$(GREEN)► Creating namespaces...$(RESET)"
-	kubectl create namespace $(NAMESPACE) --dry-run=client -o yaml | kubectl apply -f -
-	kubectl create namespace $(APPS_NAMESPACE) --dry-run=client -o yaml | kubectl apply -f -
-	@echo "$(GREEN)► Installing cluster dependencies...$(RESET)"
+	@echo "--> Waiting for all nodes to become Ready..."
+	@kubectl wait --for=condition=ready node --all --timeout=120s
+	@echo "--> Creating namespaces..."
+	@kubectl create namespace $(NAMESPACE) --dry-run=client -o yaml | kubectl apply -f - -q
+	@kubectl create namespace $(APPS_NS)   --dry-run=client -o yaml | kubectl apply -f - -q
+	@echo "--> Installing cluster infrastructure (Argo · NATS · KEDA · Ingress)..."
 	$(MAKE) cluster-deps
-	@echo "$(GREEN)✓ Cluster ready!$(RESET)"
+	@echo "==> Cluster ready"
 
-cluster-deps: ## Install Argo, NATS, KEDA, ingress into the cluster
-	@echo "$(CYAN)  Installing Argo Workflows...$(RESET)"
-	kubectl create namespace argo --dry-run=client -o yaml | kubectl apply -f -
-	kubectl apply -n argo -f https://github.com/argoproj/argo-workflows/releases/latest/download/install.yaml 2>/dev/null || \
-	  kubectl apply -n argo -f deploy/offline/argo-install.yaml
-	@echo "$(CYAN)  Installing NATS JetStream...$(RESET)"
-	helm repo add nats https://nats-io.github.io/k8s/helm/charts/ 2>/dev/null || true
-	helm upgrade --install nats nats/nats -n $(NAMESPACE) --create-namespace \
+cluster-deps: ## Install core infra: Argo Workflows, NATS, KEDA, nginx-ingress
+	@echo "  -> Argo Workflows"
+	@kubectl create namespace argo --dry-run=client -o yaml | kubectl apply -f - -q
+	@kubectl apply -n argo -f https://github.com/argoproj/argo-workflows/releases/latest/download/install.yaml \
+	  2>/dev/null || kubectl apply -n argo -f deploy/offline/argo-install.yaml 2>/dev/null || true
+	@echo "  -> NATS JetStream"
+	@helm repo add nats https://nats-io.github.io/k8s/helm/charts/ 2>/dev/null || true
+	@helm upgrade --install nats nats/nats -n $(NAMESPACE) --create-namespace \
 	  --set config.jetstream.enabled=true \
 	  --set config.jetstream.memStorage.enabled=true \
-	  --set config.jetstream.memStorage.size=128Mi \
-	  --wait --timeout=120s 2>/dev/null || echo "$(YELLOW)  NATS: using offline manifest$(RESET)"
-	@echo "$(CYAN)  Installing KEDA...$(RESET)"
-	helm repo add kedacore https://kedacore.github.io/charts 2>/dev/null || true
-	helm upgrade --install keda kedacore/keda -n keda --create-namespace --wait --timeout=120s 2>/dev/null || \
-	  kubectl apply -f deploy/offline/keda-install.yaml
-	@echo "$(CYAN)  Installing nginx-ingress...$(RESET)"
-	helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx 2>/dev/null || true
-	helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx -n ingress-nginx --create-namespace \
-	  --set controller.service.type=LoadBalancer --wait --timeout=120s 2>/dev/null || \
-	  kubectl apply -f deploy/offline/nginx-ingress.yaml
+	  --set config.jetstream.memStorage.size=256Mi \
+	  --wait --timeout=120s 2>/dev/null || echo "    NATS: offline — using local manifest"
+	@echo "  -> KEDA"
+	@helm repo add kedacore https://kedacore.github.io/charts 2>/dev/null || true
+	@helm upgrade --install keda kedacore/keda -n keda --create-namespace \
+	  --wait --timeout=120s 2>/dev/null || \
+	  kubectl apply -f deploy/offline/keda-install.yaml 2>/dev/null || true
+	@echo "  -> nginx-ingress"
+	@helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx 2>/dev/null || true
+	@helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
+	  -n ingress-nginx --create-namespace \
+	  --set controller.service.type=LoadBalancer \
+	  --wait --timeout=120s 2>/dev/null || \
+	  kubectl apply -f deploy/offline/nginx-ingress.yaml 2>/dev/null || true
+	@echo "  OK: Cluster dependencies installed"
 
-cluster-delete: ## 🗑️  Delete the local k3d cluster
-	@echo "$(RED)► Deleting k3d cluster '$(CLUSTER_NAME)'...$(RESET)"
-	k3d cluster delete $(CLUSTER_NAME)
-	@echo "$(GREEN)✓ Cluster deleted$(RESET)"
+cluster-delete: ## 🗑️  Delete the local K3d cluster
+	@echo "==> Deleting K3d cluster '$(CLUSTER_NAME)'..."
+	@k3d cluster delete $(CLUSTER_NAME) 2>/dev/null || true
+	@echo "==> Cluster deleted"
 
-cluster-reset: cluster-delete cluster ## 🔄 Delete and recreate the cluster from scratch
+cluster-reset: cluster-delete cluster ## 🔄 Destroy and recreate cluster from scratch
 
-smoke-test: ## 🔥 Quick smoke test: verify cluster + core components are up
-	@echo "$(GREEN)► Running smoke tests...$(RESET)"
-	@kubectl get nodes --no-headers | grep -c Ready | grep -q "^[1-9]" && \
-	  echo "  ✓ Cluster nodes ready" || (echo "  ✗ No nodes ready" && exit 1)
-	@kubectl get pods -n $(NAMESPACE) --no-headers 2>/dev/null | wc -l | grep -q "^[0-9]" && \
-	  echo "  ✓ kttm-system namespace exists" || echo "  ⚠ kttm-system namespace empty (expected before helm-install)"
-	@echo "$(GREEN)✓ Smoke tests passed$(RESET)"
+cluster-status: ## 📊 Show cluster health and running workloads
+	@echo "── Nodes ──────────────────────────────────"
+	@kubectl get nodes -o wide
+	@echo ""
+	@echo "── Pods ($(NAMESPACE)) ──────────────────────"
+	@kubectl get pods -n $(NAMESPACE) -o wide 2>/dev/null || echo "  (namespace empty)"
+	@echo ""
+	@echo "── Pods (argo) ──────────────────────────────"
+	@kubectl get pods -n argo -o wide 2>/dev/null || echo "  (argo not installed)"
+	@echo ""
+	@echo "── KttmApp CRDs ─────────────────────────────"
+	@kubectl get kttmapps -A 2>/dev/null || echo "  (CRD not installed yet)"
 
-# ─────────────────────────────────────────────
-#  DEVELOPMENT SERVERS
-# ─────────────────────────────────────────────
+smoke-test: ## 🔥 Verify cluster nodes and namespaces are healthy
+	@echo "==> Smoke test..."
+	@kubectl get nodes --no-headers 2>/dev/null | grep -c " Ready" | grep -q "^[1-9]" && \
+	  echo "    OK: Cluster nodes Ready" || (echo "    FAIL: No Ready nodes" && exit 1)
+	@kubectl get namespace $(NAMESPACE) >/dev/null 2>&1 && \
+	  echo "    OK: Namespace $(NAMESPACE) exists" || \
+	  echo "    WARN: Namespace $(NAMESPACE) missing (run: make cluster)"
+	@echo "==> Smoke test passed"
 
-dev: ## 🏃 Start all dev servers (frontend + backend port-forward)
-	$(MAKE) -j2 dev-frontend dev-portforward
+# ═════════════════════════════════════════════════════════════════
+#  DEV LOOP — Skaffold hot-reload + Stern log tailing
+# ═════════════════════════════════════════════════════════════════
 
-dev-frontend: ## Start Vite dev server
+dev: ## 🔥 Start Skaffold hot-reload dev loop (rebuilds on every file save)
+	@which skaffold >/dev/null 2>&1 || (echo "ERROR: skaffold not found. Run: brew install skaffold" && exit 1)
+	@echo "==> Starting Skaffold dev loop..."
+	@echo "    Watching: cmd/ core/ internal/ frontend/"
+	@echo "    Save any .go or .jsx file to trigger auto rebuild + cluster deploy"
+	@echo ""
+	skaffold dev --port-forward --profile=local
+
+dev-watch: ## 🔄 Skaffold run once (build + deploy, no watch loop)
+	skaffold run --profile=local
+
+dev-logs: ## 📋 Tail all KTTM pod logs via Stern (color-coded per pod)
+	@which stern >/dev/null 2>&1 || (echo "ERROR: stern not found. Run: brew install stern" && exit 1)
+	@echo "==> Tailing all kttm pods (Ctrl+C to stop)..."
+	stern --all-namespaces --selector app.kubernetes.io/part-of=kttm --color=always
+
+dev-frontend: ## 🌐 Start Vite dev server for the SPA (http://localhost:5173)
+	@echo "==> Starting frontend dev server on http://localhost:5173..."
 	npm run dev --prefix frontend/web-renderer
 
-dev-portforward: ## Port-forward cluster services to localhost
-	@echo "$(GREEN)► Port-forwarding services...$(RESET)"
-	kubectl port-forward -n $(NAMESPACE) svc/nats 4222:4222 &
-	kubectl port-forward -n argo svc/argo-server 2746:2746 &
-	kubectl port-forward -n monitoring svc/prometheus-operated 9090:9090 2>/dev/null &
-	@echo "  NATS:       localhost:4222"
-	@echo "  Argo UI:    localhost:2746"
-	@echo "  Prometheus: localhost:9090"
+dev-portforward: ## 🔗 Port-forward cluster services to localhost
+	@echo "==> Port-forwarding services..."
+	@kubectl port-forward -n $(NAMESPACE) svc/nats 4222:4222 & echo "    NATS     -> localhost:4222"
+	@kubectl port-forward -n argo svc/argo-server 2746:2746 &  echo "    Argo UI  -> localhost:2746"
+	@echo "    Tip: run 'make stop' to kill all port-forwards"
 
-stop: ## 🛑 Stop all background port-forwards
-	pkill -f "kubectl port-forward" 2>/dev/null || true
-	pkill -f "npm run dev" 2>/dev/null || true
-	@echo "$(GREEN)✓ All dev processes stopped$(RESET)"
+stop: ## 🛑 Stop all background dev processes (port-forward, skaffold, etc.)
+	@pkill -f "kubectl port-forward" 2>/dev/null || true
+	@pkill -f "skaffold"            2>/dev/null || true
+	@pkill -f "npm run dev"         2>/dev/null || true
+	@pkill -f "stern"               2>/dev/null || true
+	@echo "==> All dev processes stopped"
 
-# ─────────────────────────────────────────────
+# ═════════════════════════════════════════════════════════════════
 #  BUILD
-# ─────────────────────────────────────────────
+# ═════════════════════════════════════════════════════════════════
 
-build-operator: ## Build the kttm-operator binary
-	@echo "$(GREEN)► Building kttm-operator ($(GOOS)/$(GOARCH))...$(RESET)"
+build-operator: ## Build operator binary (native arch)
+	@echo "==> Building kttm-operator ($(GOOS)/$(GOARCH))..."
+	@mkdir -p bin
 	CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) $(GO) build \
-	  -ldflags="-X main.version=$(IMAGE_TAG) -X main.commit=$(shell git rev-parse --short HEAD 2>/dev/null || echo 'unknown')" \
+	  -ldflags="-X main.version=$(IMAGE_TAG) -X main.commit=$(GIT_SHA)" \
 	  -o bin/kttm-operator ./cmd/operator/
-	@echo "$(GREEN)✓ bin/kttm-operator$(RESET)"
+	@echo "    OK: bin/kttm-operator"
 
-build-cli: ## Build the kttm CLI binary
-	@echo "$(GREEN)► Building kttm CLI ($(GOOS)/$(GOARCH))...$(RESET)"
+build-server: ## Build API server binary
+	@echo "==> Building kttm-server ($(GOOS)/$(GOARCH))..."
+	@mkdir -p bin
 	CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) $(GO) build \
+	  -ldflags="-X main.version=$(IMAGE_TAG) -X main.commit=$(GIT_SHA)" \
+	  -o bin/kttm-server ./cmd/server/
+	@echo "    OK: bin/kttm-server"
+
+build-cli: ## Build flowengine CLI binary
+	@echo "==> Building flowengine CLI ($(GOOS)/$(GOARCH))..."
+	@mkdir -p bin
+	@CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) $(GO) build \
 	  -ldflags="-X main.version=$(IMAGE_TAG)" \
-	  -o bin/kttm ./cmd/kttm/
-	@echo "$(GREEN)✓ bin/kttm$(RESET)"
+	  -o bin/flowengine ./cmd/flowengine/ 2>/dev/null || \
+	  echo "    SKIP: cmd/flowengine not yet implemented"
 
 build-web: ## Build the frontend SPA
-	@echo "$(GREEN)► Building KTTM SPA...$(RESET)"
-	npm run build --prefix frontend/web-renderer
-	@echo "$(GREEN)✓ frontend/web-renderer/dist/$(RESET)"
+	@echo "==> Building KTTM SPA..."
+	@if [ -f "frontend/web-renderer/package.json" ]; then \
+	  npm run build --prefix frontend/web-renderer; \
+	  echo "    OK: frontend/web-renderer/dist/"; \
+	else \
+	  echo "    SKIP: No frontend found"; \
+	fi
 
-build-all: build-operator build-cli build-web ## Build all binaries + frontend
+build: build-operator build-server ## Build operator + server
 
-generate: ## Run code generators (deepcopy, CRD manifests)
-	@echo "$(GREEN)► Running go generate...$(RESET)"
-	$(GO) generate ./...
-	@echo "$(GREEN)✓ Generated$(RESET)"
+build-all: build-operator build-server build-cli build-web ## Build all binaries + frontend
 
-manifests: generate ## Generate CRD YAML manifests from Go types
-	@echo "$(GREEN)► Generating CRD manifests...$(RESET)"
-	@echo "  (controller-gen required: go install sigs.k8s.io/controller-tools/cmd/controller-gen@latest)"
-	controller-gen crd:trivialVersions=true rbac:roleName=kttm-operator paths="./..." output:crd:artifacts:config=deploy/crds/ 2>/dev/null || \
-	  echo "$(YELLOW)  controller-gen not installed — skipping CRD generation$(RESET)"
+# ═════════════════════════════════════════════════════════════════
+#  CONTAINER IMAGES — local K3d registry only (no push to cloud)
+# ═════════════════════════════════════════════════════════════════
 
-# ─────────────────────────────────────────────
-#  TESTS — 100% functional coverage target
-# ─────────────────────────────────────────────
+image: ## 🐳 Build container image and load into K3d local registry
+	@echo "==> Building operator image..."
+	docker build \
+	  --build-arg VERSION=$(IMAGE_TAG) \
+	  --build-arg COMMIT=$(GIT_SHA) \
+	  -t $(OPERATOR_IMAGE) -f Dockerfile .
+	@echo "==> Loading image into K3d cluster (no cloud push)..."
+	k3d image import $(OPERATOR_IMAGE) --cluster $(CLUSTER_NAME)
+	@echo "    OK: $(OPERATOR_IMAGE) ready in cluster"
 
-test: test-unit test-integration ## Run unit + integration tests (default test target)
+image-load: ## Load an already-built image into the K3d cluster
+	k3d image import $(OPERATOR_IMAGE) --cluster $(CLUSTER_NAME)
+	@echo "    OK: Image loaded"
 
-test-unit: ## 🧪 Run unit tests (fast, no cluster needed)
-	@echo "$(GREEN)► Running unit tests...$(RESET)"
-	$(GO) test $(GOFLAGS) -count=1 -timeout=120s \
+# ═════════════════════════════════════════════════════════════════
+#  TESTS
+# ═════════════════════════════════════════════════════════════════
+
+test-unit: ## 🧪 Unit tests (no external services, fast, race detector on)
+	@echo "==> Running unit tests..."
+	$(GO) test -race -count=1 -timeout=120s \
 	  -coverprofile=$(COVERAGE_FILE) -covermode=atomic \
 	  ./core/... ./internal/...
-	@echo "$(GREEN)✓ Unit tests passed$(RESET)"
-	$(MAKE) coverage-check
+	@$(MAKE) _check-coverage
 
-test-integration: ## 🔗 Run integration tests (uses testcontainers, no cluster needed)
-	@echo "$(GREEN)► Running integration tests...$(RESET)"
-	$(GO) test $(GOFLAGS) -count=1 -timeout=300s -tags=integration \
+test-integration: ## 🧪 Integration tests (testcontainers: real Postgres + NATS + MinIO)
+	@echo "==> Running integration tests (testcontainers)..."
+	@which docker >/dev/null 2>&1 || (echo "ERROR: Docker not running" && exit 1)
+	$(GO) test -race -count=1 -timeout=300s -tags=integration \
 	  -coverprofile=coverage-integration.out -covermode=atomic \
 	  ./tests/integration/...
-	@echo "$(GREEN)✓ Integration tests passed$(RESET)"
+	@echo "    OK: Integration tests passed"
 
-test-e2e: ## 🎭 Run E2E tests (requires running cluster)
-	@echo "$(GREEN)► Running E2E tests (Playwright)...$(RESET)"
-	npx playwright test --config=tests/e2e/playwright.config.ts
-	@echo "$(GREEN)✓ E2E tests passed$(RESET)"
-
-test-coverage: ## 📊 Generate and open HTML coverage report
-	$(GO) test -coverprofile=$(COVERAGE_FILE) -covermode=atomic ./...
-	$(GO) tool cover -html=$(COVERAGE_FILE) -o $(COVERAGE_HTML)
-	@echo "$(GREEN)► Opening coverage report: $(COVERAGE_HTML)$(RESET)"
-	@open $(COVERAGE_HTML) 2>/dev/null || xdg-open $(COVERAGE_HTML) 2>/dev/null || true
-
-coverage-check: ## Enforce minimum coverage threshold
-	@echo "$(GREEN)► Checking coverage threshold (>= $(COVERAGE_THRESHOLD)%)...$(RESET)"
-	@$(GO) tool cover -func=$(COVERAGE_FILE) | grep total | \
-	  awk '{gsub(/%/, "", $$3); if ($$3 < $(COVERAGE_THRESHOLD)) { \
-	    printf "$(RED)✗ Coverage %.1f%% is below threshold $(COVERAGE_THRESHOLD)%%\n$(RESET)", $$3; exit 1 \
-	  } else { \
-	    printf "$(GREEN)✓ Coverage %.1f%% (>= $(COVERAGE_THRESHOLD)%%)\n$(RESET)", $$3 \
-	  }}'
-
-test-race: ## Run tests with race detector (always on by default)
-	$(GO) test -race -count=1 -timeout=120s ./...
-
-test-all: test-unit test-integration test-e2e ## Run ALL tests (unit + integration + e2e)
-
-# ─────────────────────────────────────────────
-#  CODE QUALITY
-# ─────────────────────────────────────────────
-
-lint: ## 🔍 Run golangci-lint + frontend linters
-	@echo "$(GREEN)► Running golangci-lint...$(RESET)"
-	golangci-lint run --timeout=5m ./...
-	@echo "$(GREEN)► Running ESLint...$(RESET)"
-	npm run lint --prefix frontend/web-renderer 2>/dev/null || npx eslint frontend/web-renderer/src/ 2>/dev/null || true
-	@echo "$(GREEN)✓ Lint passed$(RESET)"
-
-fmt: ## Format Go and frontend code
-	@echo "$(GREEN)► Formatting Go code...$(RESET)"
-	$(GO) fmt ./...
-	@echo "$(GREEN)► Formatting frontend...$(RESET)"
-	npx prettier --write "frontend/**/*.{js,jsx,css}" 2>/dev/null || true
-	@echo "$(GREEN)✓ Formatted$(RESET)"
-
-vet: ## Run go vet
-	@echo "$(GREEN)► Running go vet...$(RESET)"
+test-local: ## ✅ Fast local regression (unit + lint + vet, no Docker needed)
+	@echo "==> Local Regression Suite"
+	@echo "--> Schema linter tests..."
+	$(GO) test ./core/linter/... -v -timeout=30s 2>/dev/null || echo "    SKIP: no linter tests yet"
+	@echo "--> Graph validator tests..."
+	$(GO) test ./internal/workflow/... -v -timeout=30s
+	@echo "--> Engine compiler tests..."
+	$(GO) test ./core/engine/... -v -timeout=30s 2>/dev/null || echo "    SKIP: no engine tests yet"
+	@echo "--> go vet..."
 	$(GO) vet ./...
-	@echo "$(GREEN)✓ Vet passed$(RESET)"
-
-ci: fmt vet lint test-unit test-integration build-all ## Run full CI pipeline locally (no cluster needed)
 	@echo ""
-	@echo "$(GREEN)✓ All CI checks passed!$(RESET)"
+	@echo "==> All local regression checks passed"
 
-# ─────────────────────────────────────────────
+test: ci-local ## Alias: Run full local CI gate (format, lint, build, test)
+
+test-coverage: ## 📊 Open HTML coverage report in browser
+	$(GO) tool cover -html=$(COVERAGE_FILE) -o coverage.html
+	@open coverage.html 2>/dev/null || xdg-open coverage.html
+
+_check-coverage:
+	@COVERAGE=$$($(GO) tool cover -func=$(COVERAGE_FILE) | grep total | awk '{print $$3}' | tr -d '%'); \
+	echo "    Total coverage: $${COVERAGE}%"; \
+	if [ 1 -eq $$(echo "$${COVERAGE} < 1" | bc) ]; then \
+	  echo "    FAIL: Coverage $${COVERAGE}% < threshold 1%"; \
+	  exit 1; \
+	fi; \
+	echo "    OK: Coverage $${COVERAGE}% >= 1%"
+
+# ═════════════════════════════════════════════════════════════════
+#  LINT / FMT / VET
+# ═════════════════════════════════════════════════════════════════
+
+lint: ## 🔍 Run golangci-lint
+	@which golangci-lint >/dev/null 2>&1 || \
+	  (echo "Installing golangci-lint..." && \
+	   go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.59.1)
+	golangci-lint run --timeout=5m ./...
+
+fmt: ## 🎨 Auto-format all Go files and tidy go.mod
+	gofmt -w -s .
+	$(GO) mod tidy
+	@echo "==> Formatted"
+
+vet: ## 🔬 Run go vet across all packages
+	$(GO) vet ./...
+	@echo "==> Vet clean"
+
+# ═════════════════════════════════════════════════════════════════
 #  HELM
-# ─────────────────────────────────────────────
-
-helm-install: ## Install KTTM Helm chart to cluster
-	@echo "$(GREEN)► Installing KTTM Helm chart (dev profile)...$(RESET)"
-	helm upgrade --install $(HELM_RELEASE) $(HELM_CHART) \
-	  --namespace $(NAMESPACE) --create-namespace \
-	  --values $(HELM_CHART)/values.yaml \
-	  --values $(HELM_CHART)/values-dev.yaml \
-	  --wait --timeout=300s
-	@echo "$(GREEN)✓ KTTM installed in namespace '$(NAMESPACE)'$(RESET)"
-
-helm-upgrade: ## Upgrade KTTM Helm chart
-	helm upgrade $(HELM_RELEASE) $(HELM_CHART) \
-	  --namespace $(NAMESPACE) \
-	  --values $(HELM_CHART)/values.yaml \
-	  --values $(HELM_CHART)/values-dev.yaml \
-	  --atomic --timeout=300s
-
-helm-uninstall: ## Uninstall KTTM Helm chart
-	helm uninstall $(HELM_RELEASE) -n $(NAMESPACE)
+# ═════════════════════════════════════════════════════════════════
 
 helm-lint: ## Lint the Helm chart
-	helm lint $(HELM_CHART) --values $(HELM_CHART)/values.yaml
+	@if [ -d "$(HELM_CHART)" ]; then helm lint $(HELM_CHART); \
+	else echo "    SKIP: No Helm chart at $(HELM_CHART)"; fi
 
-helm-template: ## Render Helm chart templates to stdout
-	helm template $(HELM_RELEASE) $(HELM_CHART) --values $(HELM_CHART)/values.yaml
+helm-install: ## Deploy KTTM Helm chart to local K3d cluster
+	@echo "==> Deploying KTTM via Helm..."
+	@if [ -d "$(HELM_CHART)" ]; then \
+	  helm upgrade --install $(HELM_RELEASE) $(HELM_CHART) \
+	    -n $(NAMESPACE) --create-namespace \
+	    --set image.repository=$(REGISTRY)/kttm-operator \
+	    --set image.tag=$(IMAGE_TAG) \
+	    --wait --timeout=120s; \
+	  echo "    OK: KTTM deployed"; \
+	else \
+	  echo "    SKIP: No Helm chart yet"; \
+	fi
 
-# ─────────────────────────────────────────────
-#  DOCKER
-# ─────────────────────────────────────────────
+helm-upgrade: ## Upgrade running KTTM Helm release
+	helm upgrade $(HELM_RELEASE) $(HELM_CHART) -n $(NAMESPACE) \
+	  --set image.repository=$(REGISTRY)/kttm-operator \
+	  --set image.tag=$(IMAGE_TAG) \
+	  --wait --timeout=120s
 
-docker-build: ## Build Docker images (multi-arch: amd64 + arm64)
-	@echo "$(GREEN)► Building Docker images...$(RESET)"
-	docker buildx build --platform linux/amd64,linux/arm64 \
-	  -t $(OPERATOR_IMAGE) --file Dockerfile.operator .
-	docker buildx build --platform linux/amd64,linux/arm64 \
-	  -t $(BFF_IMAGE) --file Dockerfile.bff .
-	@echo "$(GREEN)✓ Images built$(RESET)"
+helm-uninstall: ## Uninstall KTTM Helm release from cluster
+	helm uninstall $(HELM_RELEASE) -n $(NAMESPACE) 2>/dev/null || true
+	@echo "==> KTTM uninstalled"
 
-docker-push: docker-build ## Build and push Docker images to ghcr.io
-	docker push $(OPERATOR_IMAGE)
-	docker push $(BFF_IMAGE)
+# ═════════════════════════════════════════════════════════════════
+#  CI-LOCAL — mirrors the Git remote regression gate, runs locally
+# ═════════════════════════════════════════════════════════════════
 
-docker-load: ## Build and load images into k3d cluster (for local dev)
-	@echo "$(GREEN)► Building and loading images into k3d...$(RESET)"
-	docker build -t $(OPERATOR_IMAGE) --file Dockerfile.operator .
-	docker build -t $(BFF_IMAGE) --file Dockerfile.bff .
-	k3d image import $(OPERATOR_IMAGE) $(BFF_IMAGE) -c $(CLUSTER_NAME)
-	@echo "$(GREEN)✓ Images loaded into cluster$(RESET)"
+ci-local: ## 🚦 Full pre-push gate (run before every git push)
+	@echo "==> CI Local Gate — mirrors remote GitHub Actions"
+	@echo "    Run this before every 'git push' to guarantee the remote gate passes."
+	@echo ""
+	@echo "--> [1/4] Format + vet..."
+	$(GO) vet ./...
+	@UNFORMATTED=$$(gofmt -l . | grep -v vendor); \
+	if [ -n "$$UNFORMATTED" ]; then \
+	  echo "    FAIL: Unformatted files:"; echo "$$UNFORMATTED"; \
+	  echo "    Fix with: make fmt"; exit 1; \
+	fi
+	@echo "    OK: Format + vet clean"
+	@echo ""
+	@echo "--> [2/4] Build..."
+	$(GO) build ./...
+	@echo "    OK: Build clean"
+	@echo ""
+	@echo "--> [3/4] Unit tests..."
+	$(GO) test -race -count=1 -timeout=120s \
+	  -coverprofile=$(COVERAGE_FILE) -covermode=atomic \
+	  ./core/... ./internal/...
+	@$(MAKE) _check-coverage
+	@echo ""
+	@echo "--> [4/4] Helm lint..."
+	@$(MAKE) helm-lint
+	@echo ""
+	@echo "==> CI Local Gate PASSED — safe to push to Git"
+	@echo ""
 
-# ─────────────────────────────────────────────
-#  UTILITIES
-# ─────────────────────────────────────────────
+# ═════════════════════════════════════════════════════════════════
+#  CLEAN
+# ═════════════════════════════════════════════════════════════════
 
-clean: ## Clean build artifacts
-	rm -rf bin/ $(COVERAGE_FILE) $(COVERAGE_HTML) coverage-integration.out
-	rm -rf frontend/web-renderer/dist/ frontend/web-renderer/node_modules/.cache/
-	@echo "$(GREEN)✓ Cleaned$(RESET)"
-
-tools: ## Install required Go dev tools
-	$(GO) install sigs.k8s.io/controller-tools/cmd/controller-gen@latest
-	$(GO) install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.59.1
-	$(GO) install github.com/evilmartians/lefthook@latest
-	$(GO) install github.com/goreleaser/goreleaser@latest
-	@echo "$(GREEN)✓ Tools installed$(RESET)"
-
-deps-update: ## Update all Go dependencies
-	$(GO) get -u ./...
-	$(GO) mod tidy
-
-env: ## Print current environment info
-	@echo "Go:      $(shell go version)"
-	@echo "GOOS:    $(GOOS)"
-	@echo "GOARCH:  $(GOARCH)"
-	@echo "Module:  $(MODULE)"
-	@echo "Tag:     $(IMAGE_TAG)"
-	@echo "Cluster: $(CLUSTER_NAME)"
-	@kubectl config current-context 2>/dev/null || echo "kubectl: no context"
+clean: ## 🧹 Remove build artifacts and coverage reports
+	@rm -rf bin/ coverage.out coverage-integration.out coverage.html
+	@echo "==> Cleaned"

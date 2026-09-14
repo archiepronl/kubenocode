@@ -26,7 +26,7 @@ const (
 	paramGroupID         = "groupId"
 	paramAutoOffsetReset = "autoOffsetReset" // earliest | latest
 	paramMaxPollRecords  = "maxPollRecords"
-	paramBatchMode       = "batchMode"    // true = wait for N records before returning
+	paramBatchMode       = "batchMode" // true = wait for N records before returning
 	envBootstrapServers  = "KAFKA_BOOTSTRAP_SERVERS"
 	envSASLUsername      = "KAFKA_SASL_USERNAME"
 	envSASLPassword      = "KAFKA_SASL_PASSWORD"
@@ -89,7 +89,9 @@ func (c *KafkaConnector) Read(ctx context.Context, cfg connectors.ConnectorConfi
 	brokers := cfg.Env[envBootstrapServers]
 	topic := cfg.Params[paramTopic]
 	groupID := cfg.Get(paramGroupID)
-	if groupID == "" { groupID = "flowengine-consumer" }
+	if groupID == "" {
+		groupID = "flowengine-consumer"
+	}
 
 	if brokers == "" {
 		return nil, fmt.Errorf("kafka connector: KAFKA_BOOTSTRAP_SERVERS must be set in SecretRef")

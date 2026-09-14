@@ -1,0 +1,25 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kttm-operator
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      control-plane: kttm-operator
+  template:
+    metadata:
+      labels:
+        control-plane: kttm-operator
+    spec:
+      containers:
+        - name: manager
+          image: kttm-operator # Overwritten by Skaffold dynamically at build time
+          resources:
+            limits:
+              cpu: 500m
+              memory: 128Mi
+            requests:
+              cpu: 100m
+              memory: 64Mi

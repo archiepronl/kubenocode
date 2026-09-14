@@ -30,24 +30,20 @@
 
 ### Features
 
-#### F0.1 — Local K3d Cluster Bootstrap Script
-- One-command setup: `make cluster` spins up k3d cluster (1 server, 3 agents) as per `k3d-kttm-config.yaml`
-- ARM64 (M2 MacBook) + AMD64 (CI Linux) support in same script
-- Installs: Argo Workflows, NATS JetStream, KEDA, nginx-ingress
-- `make cluster-delete` tears down cleanly
-- **User test:** Developer runs `make cluster`, opens `http://localhost:8080` — KTTM UI loads
+#### F0.1 — Local Multi-Node K3d Cluster Bootstrap Script
+- One-command setup: `make setup` executes `scripts/setup-cluster.sh` to spin up a k3d cluster (1 server, 2 agents) optimized for memory on Apple Silicon.
+- Activates vertical in-place auto-scaling feature gates.
+- Installs: KEDA Event-Driven Horizontal Scaler natively.
+- `make clean` tears down cleanly.
+- **User test:** Developer runs `make setup`, opens k3d cluster info and verifies KEDA operator pod is ready.
 - **Reqs:** KTTM-NFR-001, KTTM-REQ-044
 
-#### F0.2 — GitHub Actions CI Pipeline
-- Trigger: every PR and push to `main`
-- Jobs:
-  - `lint`: `golangci-lint`, `prettier`, `eslint`
-  - `test-unit`: `go test ./...` with `-race` flag
-  - `test-integration`: `testcontainers-go` spins up real Postgres, NATS, MinIO
-  - `build`: `go build ./cmd/operator`, `go build ./cmd/kttm`, `npm run build`
-  - `docker-build`: multi-arch image build (linux/amd64, linux/arm64)
-- Status badge in README
-- **User test:** Engineer pushes a commit — GitHub shows green ✓ or red ✗ with logs
+#### F0.2 — Continuous Live-Sync Pipeline (Skaffold)
+- Trigger: `make dev` launches `skaffold dev` for reactive live-code compilation.
+- Builds native ARM64 development containers locally without pushing to slow external registries.
+- Hot-swaps Go code and React workspace changes into the local node registry in under 3 seconds.
+- Auto-hydrates Custom Resource manifests inside the cluster.
+- **User test:** Edit `cmd/operator/main.go` → Skaffold rebuilds and restarts the operator pod almost instantly.
 - **Reqs:** KTTM-NFR-003, KTTM-NFR-004
 
 #### F0.3 — Release Pipeline & Versioning
@@ -65,13 +61,13 @@
 - **User test:** Run `make generate && make manifests` → CRD YAML files updated in `deploy/`
 - **Reqs:** KTTM-NFR-005
 
-#### F0.5 — Testing Harness & Conventions
-- Unit test convention: `*_test.go` alongside every package
-- Integration test convention: `testdata/` folder with real fixture files
-- `testcontainers-go` available for: Postgres, NATS, MinIO, Redis
-- Test coverage gate: `go test -coverprofile=coverage.out` → CI fails below 60% coverage
-- E2E test skeleton: Playwright + TypeScript, `tests/e2e/` folder
-- **User test:** Run `make test` → all tests pass, coverage report generated
+#### F0.5 — Universal Local Task Master (Makefile)
+- Bridges Antigravity IDE straight to cluster lifecycle tasks.
+- Targets:
+  - `make test-unit`: fast in-memory linter and schema graph tests.
+  - `make test-integration`: real-time controller runtime integration validations.
+  - `make build`: Compiles standalone local workstation Go binary (M2 ARM64).
+- **User test:** Run `make test-unit` → all tests pass quickly in local memory.
 - **Reqs:** KTTM-NFR-003
 
 #### F0.6 — Developer Documentation & Onboarding

@@ -1,0 +1,18 @@
+# .antigravityrc
+workspace:
+  name: "kttm-engine"
+  strict_mode: true
+
+agent_policies:
+  enforce_code_quality: true
+  testing_guardrails:
+    require_coverage_percentage: 100
+    local_test_command: "make test-unit"
+    test_file_immutability:
+      enabled: true
+      exclude_paths: []
+      protected_patterns: ["**/*_test.go", "**/__tests__/**"]
+  
+  regression_handling:
+    action_on_test_failure: "halt_and_report" # Options: halt_and_report, auto_fix, bypass (forbidden)
+    allow_test_mutation: false

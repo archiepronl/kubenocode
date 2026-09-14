@@ -26,7 +26,7 @@ const connectorType = "connector/nats"
 const (
 	paramSubject    = "subject"    // NATS subject to subscribe to / publish on
 	paramQueueGroup = "queueGroup" // Queue group name (load-balanced consumers)
-	paramMaxMsgs    = "maxMsgs"   // Max messages to collect before returning (0 = stream)
+	paramMaxMsgs    = "maxMsgs"    // Max messages to collect before returning (0 = stream)
 	paramJetStream  = "jetStream"  // Use JetStream for persistent delivery
 	envNATSURL      = "NATS_URL"
 	envNATSCreds    = "NATS_CREDS_PATH"
@@ -78,7 +78,9 @@ func (c *NATSConnector) Schema() json.RawMessage {
 // Each message is forwarded as a raw byte stream preserving the original payload (FR-4.1).
 func (c *NATSConnector) Read(ctx context.Context, cfg connectors.ConnectorConfig) (*connectors.ReadResult, error) {
 	url := cfg.Env[envNATSURL]
-	if url == "" { url = "nats://nats.flowengine.svc.cluster.local:4222" }
+	if url == "" {
+		url = "nats://nats.flowengine.svc.cluster.local:4222"
+	}
 	subject := cfg.Params[paramSubject]
 	if subject == "" {
 		return nil, fmt.Errorf("nats connector: 'subject' parameter is required")
@@ -112,7 +114,9 @@ func (c *NATSConnector) Read(ctx context.Context, cfg connectors.ConnectorConfig
 // Write publishes the payload to the configured NATS subject.
 func (c *NATSConnector) Write(ctx context.Context, env connectors.EnvelopeRef, r io.Reader, cfg connectors.ConnectorConfig) error {
 	url := cfg.Env[envNATSURL]
-	if url == "" { url = "nats://nats.flowengine.svc.cluster.local:4222" }
+	if url == "" {
+		url = "nats://nats.flowengine.svc.cluster.local:4222"
+	}
 	subject := cfg.Params[paramSubject]
 	if subject == "" {
 		return fmt.Errorf("nats connector: 'subject' parameter is required for publish")
