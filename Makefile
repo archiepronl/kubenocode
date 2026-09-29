@@ -98,17 +98,17 @@ setup: ## Bootstraps the cluster, runs all tests, and launches the UI
 	@echo "==> Deploying Application Containers (Web & API)..."
 	@skaffold run --profile local
 	@echo "==> Setup Complete! Launching visual interfaces..."
-	@$(MAKE) ui
+	@./scripts/start-uis.sh --detach
 
 cluster-verify: ## Runs all local sandbox integration checks automatically
 	@echo "==> Verifying Local Cluster Core Dependencies"
 	@echo "--> Checking Nodes..."
 	@kubectl get nodes | grep "Ready" || (echo "ERROR: Nodes not ready" && exit 1)
 	@echo "--> Checking KEDA Autoscaler..."
-	@kubectl wait --namespace keda --for=condition=ready pod --selector=app=keda-operator --timeout=30s
+	@kubectl rollout status --namespace keda deployment/keda-operator --timeout=90s
 	@echo "--> Checking Argo Workflows Engine..."
-	@kubectl wait --namespace argo --for=condition=ready pod --selector=app=workflow-controller --timeout=30s
-	@kubectl wait --namespace argo --for=condition=ready pod --selector=app=argo-server --timeout=30s
+	@kubectl rollout status --namespace argo deployment/workflow-controller --timeout=90s
+	@kubectl rollout status --namespace argo deployment/argo-server --timeout=90s
 	@echo "==> SUCCESS: All Dev Foundation components are fully operational!"
 
 # ═════════════════════════════════════════════════════════════════

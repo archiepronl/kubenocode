@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -e
 
+DETACH=0
+if [ "${1:-}" = "--detach" ]; then
+	DETACH=1
+fi
+
 # Colors
 GREEN='\033[0;32m'
 CYAN='\033[0;36m'
@@ -13,13 +18,21 @@ echo -e "${YELLOW}Keep this terminal tab open. Press Ctrl+C to stop all UIs.${RE
 # 1. K3d UI / Kubernetes Dashboard
 echo -e "--> 1. Kubernetes Dashboard (K3d UI)"
 echo -e "       Available at: ${GREEN}https://localhost:9090${RESET}"
-kubectl -n kubernetes-dashboard port-forward svc/kubernetes-dashboard 9090:443 > /dev/null 2>&1 &
+if [ "$DETACH" -eq 1 ]; then
+	nohup kubectl -n kubernetes-dashboard port-forward svc/kubernetes-dashboard 9090:443 >/tmp/kttm-dashboard-port-forward.log 2>&1 </dev/null &
+else
+	kubectl -n kubernetes-dashboard port-forward svc/kubernetes-dashboard 9090:443 > /dev/null 2>&1 &
+fi
 K8S_PID=$!
 
 # 2. Argo Workflows UI
 echo -e "--> 2. Argo Workflows UI (Execution Engine)"
 echo -e "       Available at: ${GREEN}https://localhost:2746${RESET}"
-kubectl -n argo port-forward service/argo-server 2746:2746 > /dev/null 2>&1 &
+if [ "$DETACH" -eq 1 ]; then
+	nohup kubectl -n argo port-forward service/argo-server 2746:2746 >/tmp/kttm-argo-port-forward.log 2>&1 </dev/null &
+else
+	kubectl -n argo port-forward service/argo-server 2746:2746 > /dev/null 2>&1 &
+fi
 ARGO_PID=$!
 
 # 3. KubeNoCode App (Frontend)
@@ -38,4 +51,8 @@ echo -e "${GREEN}$TOKEN${RESET}"
 trap "echo -e '\n\n${CYAN}==> Shutting down UI connections...${RESET}'; kill $K8S_PID $ARGO_PID; exit 0" SIGINT SIGTERM
 
 echo -e "\n${CYAN}All connections established. UIs are live!${RESET}"
+if [ "$DETACH" -eq 1 ]; then
+	echo -e "Detached port-forwards: Dashboard PID ${K8S_PID}, Argo PID ${ARGO_PID}"
+	exit 0
+fi
 wait

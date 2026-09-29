@@ -2,7 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: kttm-operator
-  namespace: default
+  namespace: kttm-system
 spec:
   replicas: 1
   selector:
@@ -15,7 +15,8 @@ spec:
     spec:
       containers:
         - name: manager
-          image: kttm-operator # Overwritten by Skaffold dynamically at build time
+          image: kttm-registry.localhost:5001/kttm-operator
+          imagePullPolicy: IfNotPresent
           resources:
             limits:
               cpu: 500m

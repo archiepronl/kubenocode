@@ -20,7 +20,7 @@ spec:
           image: kttm-registry.localhost:5001/kttm-web
           imagePullPolicy: IfNotPresent
           ports:
-            - containerPort: 80
+            - containerPort: 8080
               name: http
 ---
 apiVersion: v1
@@ -34,4 +34,4 @@ spec:
   ports:
     - protocol: TCP
       port: 80
-      targetPort: 80
+      targetPort: 8080

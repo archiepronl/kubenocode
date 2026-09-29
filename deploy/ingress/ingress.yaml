@@ -3,9 +3,8 @@ kind: Ingress
 metadata:
   name: kttm-ingress
   namespace: kttm-system
-  annotations:
-    kubernetes.io/ingress.class: nginx
 spec:
+  ingressClassName: nginx
   rules:
     - http:
         paths:
