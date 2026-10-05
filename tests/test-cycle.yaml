@@ -1,0 +1,15 @@
+apiVersion: flowengine.io/v1alpha1
+kind: FullStackApplication
+metadata:
+  name: test-linter-cycle
+  namespace: default
+spec:
+  version: "1.0"
+  workflowDag:
+    nodes:
+      - id: nodeA
+        type: script/python
+        outputs: ["nodeB"]
+      - id: nodeB
+        type: script/bash
+        outputs: ["nodeA"] # <-- This creates an illegal infinite loop

@@ -24,7 +24,8 @@ import (
 
 // Mapper translates Kubernetes RBAC decisions into KTTM permission arrays.
 type Mapper struct {
-	k8s kubernetes.Interface
+	k8s                kubernetes.Interface
+	resolvePermissions func(context.Context, Principal, *kttmv1.KttmApp) ([]kttmv1.KttmPermission, error)
 }
 
 // NewMapper creates a new RBAC mapper using the provided Kubernetes client.
@@ -98,7 +99,11 @@ func (m *Mapper) ResolvePermissions(ctx context.Context, p Principal, app *kttmv
 // HasPermission is a convenience helper that returns true if the principal
 // holds a specific KTTM permission.
 func (m *Mapper) HasPermission(ctx context.Context, p Principal, app *kttmv1.KttmApp, perm kttmv1.KttmPermission) (bool, error) {
-	perms, err := m.ResolvePermissions(ctx, p, app)
+	resolve := m.resolvePermissions
+	if resolve == nil {
+		resolve = m.ResolvePermissions
+	}
+	perms, err := resolve(ctx, p, app)
 	if err != nil {
 		return false, err
 	}

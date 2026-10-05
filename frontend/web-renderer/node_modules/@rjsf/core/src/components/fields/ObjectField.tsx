@@ -1,0 +1,467 @@
+import type { FocusEvent } from 'react';
+import { memo, useCallback, useMemo, useRef, useState } from 'react';
+import type {
+  ErrorSchema,
+  FieldPathId,
+  FieldPathList,
+  FieldProps,
+  FormContextType,
+  GenericObjectType,
+  Registry,
+  RJSFMarkedSchema,
+  RJSFSchema,
+  StrictRJSFSchema,
+} from '@rjsf/utils';
+import {
+  getByPath,
+  hasByPath,
+  setByPath,
+  ADDITIONAL_PROPERTY_FLAG,
+  ANY_OF_KEY,
+  deepEquals,
+  getTemplate,
+  getPropertySchema,
+  getUiOptions,
+  isFormDataAvailable,
+  orderProperties,
+  shouldRenderOptionalField,
+  toFieldPathId,
+  useDeepCompareMemo,
+  ONE_OF_KEY,
+  REF_KEY,
+  isObject,
+  TranslatableString,
+} from '@rjsf/utils';
+import { Markdown } from 'markdown-to-jsx/react';
+
+import { ADDITIONAL_PROPERTY_KEY_REMOVE } from '../constants.ts';
+
+/** Returns a flag indicating whether the `name` field is required in the object schema
+ *
+ * @param schema - The schema to check
+ * @param name - The name of the field to check for required-ness
+ * @returns - True if the field `name` is required, false otherwise
+ */
+function isRequired<S extends StrictRJSFSchema = RJSFSchema>(schema: S, name: string) {
+  return Array.isArray(schema.required) && schema.required.includes(name);
+}
+
+/** Returns a default value to be used for a new additional schema property of the given `type`
+ *
+ * @param translateString - The string translation function from the registry
+ * @param type - The type of the new additional schema property
+ */
+function getDefaultValue<T = any, S extends StrictRJSFSchema = RJSFSchema, F extends FormContextType = any>(
+  translateString: Registry<T, S, F>['translateString'],
+  type?: RJSFSchema['type'],
+) {
+  switch (type) {
+    case 'array':
+      return [];
+    case 'boolean':
+      return false;
+    case 'null':
+      return null;
+    case 'number':
+      return 0;
+    case 'object':
+      return {};
+    case 'string':
+    default:
+      // We don't have a datatype for some reason (perhaps additionalProperties was true)
+      return translateString(TranslatableString.NewStringDefault);
+  }
+}
+
+function isAdditionalPropertySchema(schema: unknown) {
+  return Boolean((schema as RJSFMarkedSchema)?.[ADDITIONAL_PROPERTY_FLAG]);
+}
+
+function getAdditionalPropertyOrder<S extends StrictRJSFSchema = RJSFSchema>(
+  schemaProperties: NonNullable<S['properties']>,
+) {
+  return Object.keys(schemaProperties).filter((property) => isAdditionalPropertySchema(schemaProperties[property]));
+}
+
+/** Props for the `ObjectFieldProperty` component */
+interface ObjectFieldPropertyProps<
+  T = any,
+  S extends StrictRJSFSchema = RJSFSchema,
+  F extends FormContextType = any,
+> extends Omit<FieldProps<T, S, F>, 'name'> {
+  /** The name of the property within the parent object */
+  propertyName: string;
+  /** Flag indicating whether this property was added by the additionalProperties UI */
+  addedByAdditionalProperties: boolean;
+  /** Callback that handles the rename of an additionalProperties-based property key */
+  handleKeyRename: (oldKey: string, newKey: string) => void;
+  /** Callback that handles the removal of an additionalProperties-based property with key */
+  handleRemoveProperty: (keyName: string) => void;
+}
+
+/** The `ObjectFieldProperty` component is used to render the `SchemaField` for a child property of an object
+ */
+function ObjectFieldPropertyFn<T = any, S extends StrictRJSFSchema = RJSFSchema, F extends FormContextType = any>(
+  props: ObjectFieldPropertyProps<T, S, F>,
+) {
+  const {
+    fieldPathId,
+    schema,
+    registry,
+    uiSchema,
+    errorSchema,
+    formData,
+    onChange,
+    onBlur,
+    onFocus,
+    disabled,
+    readonly,
+    required,
+    hideError,
+    propertyName,
+    handleKeyRename,
+    handleRemoveProperty,
+    addedByAdditionalProperties,
+  } = props;
+  const [wasPropertyKeyModified, setWasPropertyKeyModified] = useState(false);
+  const { globalFormOptions, fields } = registry;
+  const { SchemaField } = fields;
+  const innerFieldIdPathId = useDeepCompareMemo<FieldPathId>(
+    toFieldPathId(propertyName, globalFormOptions, fieldPathId.path),
+  );
+
+  /** The `onChange` handler installed on this property's `SchemaField`. Handles the special case where the user
+   * clears a value at this property's own path when it was added as an additional property, coercing `undefined`
+   * to the empty string so the property's key input survives. Every other change, including any change to a
+   * descendant of this property, is forwarded to `onChange()` untouched.
+   */
+  const onPropertyChange = useCallback(
+    (value: T | undefined, path: FieldPathList, newErrorSchema?: ErrorSchema<T>, id?: string) => {
+      // An `additionalProperties` value lives at this property's own path, so clearing its widget to `undefined`
+      // would drop the key from the formData and take the key input with it. Coerce that one case to the empty
+      // string.
+      // A descendant's path is this property's path plus at least one segment, so comparing to this
+      // property's own path (rather than merely its length) tells apart "this property changed" from "a
+      // descendant changed"; a cleared descendant must stay `undefined` so it is omitted from the formData
+      // exactly like a cleared property declared in `properties` (#5222).
+      let normalizedValue = value;
+      if (value === undefined && addedByAdditionalProperties && deepEquals(path, innerFieldIdPathId.path)) {
+        normalizedValue = '' as unknown as T;
+      }
+      onChange(normalizedValue, path, newErrorSchema, id);
+    },
+    [onChange, addedByAdditionalProperties, innerFieldIdPathId],
+  );
+
+  /** The key change event handler; Called when the key associated with a field is changed for an additionalProperty.
+   * simply returns a function that call the `handleKeyChange()` event with the value
+   */
+  const onKeyRename = useCallback(
+    (value: string) => {
+      if (propertyName !== value) {
+        setWasPropertyKeyModified(true);
+      }
+      handleKeyRename(propertyName, value);
+    },
+    [propertyName, handleKeyRename],
+  );
+
+  /** Returns a callback the handle the blur event, getting the value from the target and passing that along to the
+   * `handleKeyChange` function
+   */
+  const onKeyRenameBlur = useCallback(
+    (event: FocusEvent<HTMLInputElement>) => {
+      const {
+        target: { value },
+      } = event;
+      onKeyRename(value);
+    },
+    [onKeyRename],
+  );
+
+  /** The property drop/removal event handler; Called when a field is removed in an additionalProperty context
+   */
+  const onRemoveProperty = useCallback(() => {
+    handleRemoveProperty(propertyName);
+  }, [propertyName, handleRemoveProperty]);
+
+  return (
+    <SchemaField
+      name={propertyName}
+      required={required}
+      schema={schema}
+      uiSchema={uiSchema}
+      errorSchema={errorSchema}
+      fieldPathId={innerFieldIdPathId}
+      formData={formData}
+      wasPropertyKeyModified={wasPropertyKeyModified}
+      onKeyRename={onKeyRename}
+      onKeyRenameBlur={onKeyRenameBlur}
+      onRemoveProperty={onRemoveProperty}
+      onChange={onPropertyChange}
+      onBlur={onBlur}
+      onFocus={onFocus}
+      registry={registry}
+      disabled={disabled}
+      readonly={readonly}
+      hideError={hideError}
+    />
+  );
+}
+
+const ObjectFieldProperty = memo(ObjectFieldPropertyFn) as typeof ObjectFieldPropertyFn;
+
+/** The `ObjectField` component is used to render a field in the schema that is of type `object`. It tracks whether an
+ * additional property key was modified and what it was modified to
+ *
+ * @param props - The `FieldProps` for this template
+ */
+export default function ObjectField<T = any, S extends StrictRJSFSchema = RJSFSchema, F extends FormContextType = any>(
+  props: FieldProps<T, S, F>,
+) {
+  const {
+    schema: rawSchema,
+    uiSchema = {},
+    formData,
+    errorSchema,
+    fieldPathId,
+    name,
+    required = false,
+    disabled,
+    readonly,
+    hideError,
+    onBlur,
+    onFocus,
+    onChange,
+    registry,
+    title,
+  } = props;
+  const { fields, schemaUtils, translateString, globalUiOptions } = registry;
+  const { OptionalDataControlsField } = fields;
+  const formDataRef = useRef(formData);
+  formDataRef.current = formData;
+  const schema: S = useMemo(
+    () => schemaUtils.retrieveSchema(rawSchema, formData, true),
+    [schemaUtils, rawSchema, formData],
+  );
+  const uiOptions = useMemo(() => getUiOptions<T, S, F>(uiSchema, globalUiOptions), [uiSchema, globalUiOptions]);
+  const schemaProperties = useMemo(() => schema.properties ?? {}, [schema.properties]);
+  // All the children will use childFieldPathId if present in the props, falling back to the fieldPathId
+  const childFieldPathId = props.childFieldPathId ?? fieldPathId;
+  const lastRenamedProperty = useRef({ previousKey: '', currentKey: undefined as string | undefined });
+  const [additionalPropertyOrder, setAdditionalPropertyOrder] = useState(() =>
+    getAdditionalPropertyOrder<S>(schemaProperties),
+  );
+  const definedPropertyOrder = useMemo(() => {
+    const additionalPropertySet = new Set(getAdditionalPropertyOrder<S>(schemaProperties));
+    return Object.keys(schemaProperties).filter((property) => !additionalPropertySet.has(property));
+  }, [schemaProperties]);
+
+  const templateTitle = uiOptions.title ?? schema.title ?? title ?? name;
+  const description = uiOptions.description ?? schema.description;
+  const renderOptionalField = shouldRenderOptionalField<T, S, F>(registry, schema, required, uiSchema);
+  const hasFormData = isFormDataAvailable<T>(formData);
+  let orderedProperties: string[] = [];
+
+  /** Computes the next available key name from the `preferredKey`, indexing through the already existing keys until one
+   * that is already not assigned is found.
+   *
+   * @param preferredKey - The preferred name of a new key
+   * @param [formData] - The form data in which to check if the desired key already exists
+   * @returns - The name of the next available key from `preferredKey`
+   */
+  const getAvailableKey = useCallback(
+    (preferredKey: string, existingFormData?: T) => {
+      const { duplicateKeySuffixSeparator = '-' } = getUiOptions<T, S, F>(uiSchema, globalUiOptions);
+
+      let index = 0;
+      let newKey = preferredKey;
+      while (hasByPath(existingFormData, newKey)) {
+        index += 1;
+        newKey = `${preferredKey}${duplicateKeySuffixSeparator}${index}`;
+      }
+      return newKey;
+    },
+    [uiSchema, globalUiOptions],
+  );
+
+  /** Handles the adding of a new additional property on the given `schema`. Calls the `onChange` callback once the new
+   * default data for that field has been added to the formData.
+   */
+  const onAddProperty = useCallback(() => {
+    if (!(schema.additionalProperties || schema.patternProperties)) {
+      return;
+    }
+    const newFormData = { ...formData } as T;
+    const newKey = getAvailableKey('newKey', newFormData);
+    if (schema.patternProperties) {
+      setByPath(newFormData, newKey, null);
+    } else {
+      let type: RJSFSchema['type'] = undefined;
+      let constValue: RJSFSchema['const'] = undefined;
+      let defaultValue: RJSFSchema['default'] = undefined;
+      if (isObject(schema.additionalProperties)) {
+        type = schema.additionalProperties.type;
+        constValue = schema.additionalProperties.const;
+        defaultValue = schema.additionalProperties.default;
+        let apSchema = schema.additionalProperties;
+        if (REF_KEY in apSchema) {
+          apSchema = schemaUtils.retrieveSchema({ [REF_KEY]: apSchema[REF_KEY] } as S, formData);
+          type = apSchema.type;
+          constValue = apSchema.const;
+          defaultValue = schemaUtils.getDefaultFormState(apSchema as S, defaultValue as T) as RJSFSchema['default'];
+        }
+        if (!type && (ANY_OF_KEY in apSchema || ONE_OF_KEY in apSchema)) {
+          type = 'object';
+        }
+      }
+
+      const newValue = constValue ?? defaultValue ?? getDefaultValue<T, S, F>(translateString, type);
+      setByPath(newFormData, newKey, newValue);
+    }
+
+    if (lastRenamedProperty.current.previousKey === newKey) {
+      lastRenamedProperty.current.currentKey = newKey;
+      lastRenamedProperty.current.previousKey = getAvailableKey(newKey, newFormData);
+    }
+    setAdditionalPropertyOrder((order) => [...order, newKey]);
+    onChange(newFormData, childFieldPathId.path);
+  }, [formData, onChange, translateString, schemaUtils, childFieldPathId, getAvailableKey, schema]);
+
+  /** Returns a callback function that deals with the rename of a key for an additional property for a schema. That
+   * callback will attempt to rename the key and move the existing data to that key, calling `onChange` when it does.
+   *
+   * @param oldKey - The old key for the field
+   * @param newKey - The new key for the field
+   * @returns - The key change callback function
+   */
+  const handleKeyRename = useCallback(
+    (oldKey: string, newKey: string) => {
+      if (oldKey !== newKey) {
+        const currentFormData = formDataRef.current;
+        const actualNewKey = getAvailableKey(newKey, currentFormData);
+        const newFormData: GenericObjectType = {
+          ...(currentFormData as GenericObjectType),
+        };
+        const newKeys: GenericObjectType = { [oldKey]: actualNewKey };
+        const keyValues = Object.keys(newFormData).map((key) => {
+          // `Object.hasOwn` so a falsy rename target (e.g. `""`) isn't dropped.
+          const mappedKey = Object.hasOwn(newKeys, key) ? newKeys[key] : key;
+          return { [mappedKey]: newFormData[key] };
+        });
+        const renamedObj = Object.assign({}, ...keyValues);
+
+        formDataRef.current = renamedObj as T;
+        if (oldKey !== lastRenamedProperty.current.currentKey) {
+          lastRenamedProperty.current.previousKey = oldKey;
+        }
+        lastRenamedProperty.current.currentKey = actualNewKey;
+        setAdditionalPropertyOrder((order) => order.map((property) => (property === oldKey ? actualNewKey : property)));
+        onChange(renamedObj, childFieldPathId.path);
+      }
+    },
+    [onChange, childFieldPathId, getAvailableKey],
+  );
+
+  /** Handles the remove click which calls the `onChange` callback with the special ADDITIONAL_PROPERTY_FIELD_REMOVE
+   * value for the path plus the key to be removed
+   */
+  const handleRemoveProperty = useCallback(
+    (key: string) => {
+      setAdditionalPropertyOrder((order) => order.filter((property) => property !== key));
+      onChange(ADDITIONAL_PROPERTY_KEY_REMOVE as T, [...childFieldPathId.path, key]);
+    },
+    [onChange, childFieldPathId],
+  );
+
+  /** Returns the stable React key for a property. For the most recently renamed
+   * additional property, returns the previous key so that React reuses the
+   * existing component instance instead of unmounting/remounting it. This
+   * preserves DOM focus naturally without manual focus management.
+   */
+  const getStableKey = useCallback((property: string) => {
+    if (lastRenamedProperty.current.currentKey === property) {
+      return lastRenamedProperty.current.previousKey;
+    }
+    return property;
+  }, []);
+
+  if (!renderOptionalField || hasFormData) {
+    try {
+      const definedPropertySet = new Set(definedPropertyOrder);
+      const currentAdditionalProperties = additionalPropertyOrder.filter(
+        (property) => Object.hasOwn(schemaProperties, property) && !definedPropertySet.has(property),
+      );
+      orderedProperties = orderProperties([...definedPropertyOrder, ...currentAdditionalProperties], uiOptions.order);
+    } catch (err) {
+      return (
+        <div>
+          <p className='rjsf-config-error' style={{ color: 'red' }}>
+            <Markdown options={{ disableParsingRawHTML: true }}>
+              {translateString(TranslatableString.InvalidObjectField, [name || 'root', (err as Error).message])}
+            </Markdown>
+          </p>
+          <pre>{JSON.stringify(schema)}</pre>
+        </div>
+      );
+    }
+  }
+
+  const Template = getTemplate<'ObjectFieldTemplate', T, S, F>('ObjectFieldTemplate', registry, uiOptions);
+  const optionalDataControl = renderOptionalField ? (
+    <OptionalDataControlsField {...props} fieldPathId={childFieldPathId} schema={schema} />
+  ) : undefined;
+
+  const templateProps = {
+    // getDisplayLabel() always returns false for object types, so just check the `uiOptions.label`
+    title: uiOptions.label === false ? '' : templateTitle,
+    description: uiOptions.label === false ? undefined : description,
+    properties: orderedProperties.map((propertyName) => {
+      const addedByAdditionalProperties = isAdditionalPropertySchema(schema.properties?.[propertyName]);
+      const fieldUiSchema = addedByAdditionalProperties ? uiSchema.additionalProperties : uiSchema[propertyName];
+      const hidden = getUiOptions<T, S, F>(fieldUiSchema).widget === 'hidden';
+      const content = (
+        <ObjectFieldProperty<T, S, F>
+          key={getStableKey(propertyName)}
+          propertyName={propertyName}
+          required={isRequired<S>(schema, propertyName)}
+          schema={getPropertySchema<S>(schema, propertyName)}
+          uiSchema={fieldUiSchema}
+          errorSchema={getByPath(errorSchema, propertyName)}
+          fieldPathId={childFieldPathId}
+          formData={getByPath(formData, propertyName)}
+          handleKeyRename={handleKeyRename}
+          handleRemoveProperty={handleRemoveProperty}
+          addedByAdditionalProperties={addedByAdditionalProperties}
+          onChange={onChange}
+          onBlur={onBlur}
+          onFocus={onFocus}
+          registry={registry}
+          disabled={disabled}
+          readonly={readonly}
+          hideError={hideError}
+        />
+      );
+      return {
+        content,
+        name: propertyName,
+        readonly,
+        disabled,
+        required,
+        hidden,
+      };
+    }),
+    readonly,
+    disabled,
+    required,
+    fieldPathId,
+    uiSchema,
+    errorSchema,
+    schema,
+    formData,
+    registry,
+    optionalDataControl,
+    className: renderOptionalField ? 'rjsf-optional-object-field' : undefined,
+  };
+  return <Template {...templateProps} onAddProperty={onAddProperty} />;
+}

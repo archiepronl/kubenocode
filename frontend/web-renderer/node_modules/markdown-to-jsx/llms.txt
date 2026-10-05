@@ -1,0 +1,367 @@
+# markdown-to-jsx
+
+> CommonMark + GFM compliant markdown parser and compiler toolchain for JS/TS. Renders to React, React Native, Solid, Vue, HTML strings, or normalized markdown. Fast enough for real-time streaming. Current major version: v9.
+
+Raw HTML in the source is parsed into real elements, never `dangerouslySetInnerHTML`. Every emitted tag is overridable. GFM tables, task lists, strikethrough, autolinks, footnotes, and tag filtering are on by default. Zero runtime dependencies and no network access.
+
+Mental model: `parser(md) -> ASTNode[]` then `astTo*(ast, options) -> output`. `compiler(md, options)` is those two steps fused, and the framework `<Markdown>` components wrap `compiler`. Reach for `parser` only when you need to inspect or transform nodes before rendering.
+
+## Install
+
+```shell
+npm i markdown-to-jsx
+```
+
+## Entry points
+
+Pick the entry point for your target. Each one ships only the renderer it names, so tree-shaking works.
+
+| Import                     | Default export | Named exports                                                                 | Output          |
+| -------------------------- | -------------- | ----------------------------------------------------------------------------- | --------------- |
+| `markdown-to-jsx`          | `Markdown`     | `compiler`, `parser`, `RuleType`, `sanitizer`, `slugify`, `MarkdownToJSX`     | React elements  |
+| `markdown-to-jsx/react`    | `Markdown`     | above + `astToJSX`, `MarkdownProvider`, `MarkdownContext`                     | React elements  |
+| `markdown-to-jsx/native`   | `Markdown`     | above + `astToNative`, `MarkdownProvider`, `MarkdownContext`                  | RN elements     |
+| `markdown-to-jsx/solid`    | `Markdown`     | above + `astToJSX`, `MarkdownProvider`, `MarkdownContext`                     | Solid JSX       |
+| `markdown-to-jsx/vue`      | `Markdown`     | above + `astToJSX`, `MarkdownProvider`, `MarkdownOptionsKey`                  | Vue vnodes      |
+| `markdown-to-jsx/html`     | none           | `compiler`, `parser`, `astToHTML`, `RuleType`, `sanitizer`, `slugify`         | HTML string     |
+| `markdown-to-jsx/markdown` | none           | `compiler`, `parser`, `astToMarkdown`, `markdown`, `RuleType`                 | markdown string |
+
+The bare `markdown-to-jsx` entry is the legacy one: its React code still works but is deprecated. New React code should import `markdown-to-jsx/react`.
+
+## Core patterns
+
+React component. Works unchanged in a Server Component and a Client Component; no `'use client'` needed.
+
+```tsx
+import Markdown from 'markdown-to-jsx/react'
+
+;<Markdown options={{ wrapper: 'article' }}>{content}</Markdown>
+```
+
+Direct compile, no component:
+
+```tsx
+import { compiler } from 'markdown-to-jsx/react'
+
+const element = compiler('# Hello world')
+```
+
+AST first, render second:
+
+```tsx
+import { parser, astToJSX, RuleType } from 'markdown-to-jsx/react'
+
+const ast = parser('# Hello world')
+const headings = ast.filter(node => node.type === RuleType.heading)
+const element = astToJSX(ast)
+```
+
+HTML string for server rendering:
+
+```ts
+import { compiler } from 'markdown-to-jsx/html'
+
+const html = compiler('# Hello world') // "<h1 id="hello-world">Hello world</h1>"
+```
+
+Markdown in, normalized markdown out:
+
+```ts
+import { compiler } from 'markdown-to-jsx/markdown'
+
+compiler('Setext\n======\n\n* a\n* b') // "# Setext\n\n- a\n- b"
+```
+
+React Native, styled per element key:
+
+```tsx
+import Markdown from 'markdown-to-jsx/native'
+import { Linking, StyleSheet } from 'react-native'
+
+;<Markdown
+  options={{
+    styles: StyleSheet.create({
+      text: { color: '#333', fontSize: 17 }, // base under all rendered text
+      heading1: { fontSize: 32, fontWeight: 'bold' },
+      link: { color: '#58a6ff' },
+    }),
+    onLinkPress: url => Linking.openURL(url),
+  }}
+>
+  {content}
+</Markdown>
+```
+
+Solid, reactive by passing an accessor:
+
+```tsx
+import Markdown from 'markdown-to-jsx/solid'
+
+const [content, setContent] = createSignal('# Hello world')
+;<Markdown>{content}</Markdown>
+```
+
+Vue 3, via `h()` under the hood:
+
+```tsx
+import Markdown, { compiler } from 'markdown-to-jsx/vue'
+
+const vnode = compiler('# Hello world')
+```
+
+## Options
+
+Shared across every renderer unless noted.
+
+| Option                          | Type                          | Default  | Effect                                                                           |
+| ------------------------------- | ----------------------------- | -------- | -------------------------------------------------------------------------------- |
+| `createElement`                 | `function`                    | -        | Hook `(type, props, children)` before elements are built. JSX renderers only.     |
+| `disableAutoLink`               | `boolean`                     | `false`  | Leave bare URLs as text.                                                          |
+| `disableParsingRawHTML`         | `boolean`                     | `false`  | Skip converting raw HTML to elements.                                             |
+| `enforceAtxHeadings`            | `boolean`                     | `false`  | Require a space after `#` for a heading.                                          |
+| `evalUnserializableExpressions` | `boolean`                     | `false`  | Run `eval()` on JSX prop expressions. Unsafe; see Don't.                          |
+| `forceBlock` / `forceInline`    | `boolean`                     | `false`  | Pin the whole input to block or inline parsing.                                   |
+| `forceWrapper`                  | `boolean`                     | `false`  | Wrap even a single child. JSX renderers only.                                     |
+| `ignoreHTMLBlocks`              | `boolean`                     | `false`  | Emit HTML blocks as literal text.                                                 |
+| `optimizeForStreaming`          | `boolean`                     | `false`  | Hold back incomplete syntax while content streams in.                             |
+| `overrides`                     | `object`                      | -        | Swap the component or props used for a tag name.                                  |
+| `preserveFrontmatter`           | `boolean`                     | `false`  | Render frontmatter instead of dropping it.                                        |
+| `renderRule`                    | `function`                    | -        | Intercept rendering per AST node, before anything else.                           |
+| `sanitizer`                     | `function`                    | built-in | Replace URL scheme sanitization. Signature `(value, tag, attribute)`.             |
+| `slugify`                       | `function`                    | built-in | Replace heading id generation from plain text content. Duplicate ids still get `-1`, `-2`, … suffixes. |
+| `tagfilter`                     | `boolean`                     | `true`   | Escape leading `<` on `script`, `iframe`, `style`, `title`, `textarea`, `xmp`, `noembed`, and kin; keep body and closer as inert text; allowed nested tags still render. |
+| `wrapper`                       | `string \| component \| null` | `'div'`  | Element wrapping multiple children. `null` returns an array. JSX renderers only.  |
+| `wrapperProps`                  | `object`                      | -        | Props for that wrapper.                                                           |
+
+React Native adds `styles`, `onLinkPress`, and `onLinkLongPress`.
+
+## Overrides
+
+Keys are HTML tag names, and they fire for both parsed markdown and raw HTML. A capitalized key registers a custom component usable directly in the markdown source.
+
+```tsx
+import DatePicker from './date-picker'
+
+;<Markdown
+  options={{
+    overrides: {
+      h1: { component: Title, props: { className: 'page-title' } },
+      code: SyntaxHighlightedCode, // shorthand for { component: ... }
+      iframe: () => null, // remove entirely
+      DatePicker, // <DatePicker timezone="UTC+5" /> in the markdown
+    },
+  }}
+>
+  {content}
+</Markdown>
+```
+
+Props the library always supplies: `a` gets `href`/`title`, `img` gets `src`/`alt`/`title`, `input[type=checkbox]` gets `checked`/`readonly`, `ol` gets `start`, `td`/`th` get `style`. Inline text renders as `span`, inline code as `code`, fenced code as `pre > code`.
+
+Common one-liners, all through the same mechanism:
+
+```tsx
+/** open every link in a new tab */
+{ a: { props: { target: '_blank', rel: 'noopener noreferrer' } } }
+
+/** drop images but keep their alt text as visible copy */
+{ img: ({ alt }) => alt }
+
+/** rewrite image sources onto a CDN */
+{ img: props => <img {...props} src={CDN + props.src} /> }
+
+/** unwrap a tag, keeping its content */
+{ b: ({ children }) => children }
+
+/** drop a tag and its content entirely */
+{ iframe: () => null }
+```
+
+There is no built-in tag allow-list option. Build one by unwrapping (`({ children }) => children`) or dropping (`() => null`) each tag you want gone, or set `disableParsingRawHTML: true` to render every raw HTML tag as literal text.
+
+Override keys match the source tag's exact case: `<MyThing />` needs the key `MyThing`, and a `mything` key will not fire.
+
+## renderRule
+
+Runs before every other rendering path and sees nodes that are normally skipped (`ref`, `footnote`, `frontmatter`). Call `next()` to fall through to the default.
+
+Here it swaps `:smile:` style shortcodes for emoji as text nodes are rendered:
+
+```tsx
+import { RuleType } from 'markdown-to-jsx/react'
+
+const shortcodes = { smile: '🙂' }
+const detector = /(:[^:\s]+:)/g
+
+compiler(content, {
+  renderRule(next, node, renderChildren, state) {
+    if (node.type === RuleType.text && node.text.includes(':')) {
+      return node.text
+        .split(detector)
+        .map(part =>
+          part.startsWith(':') && part.endsWith(':')
+            ? shortcodes[part.slice(1, -1)] || part
+            : part
+        )
+    }
+    return next()
+  },
+})
+```
+
+`RuleType.text` is the hottest node type in the parser, so keep any matcher on it cheap and benchmark it.
+
+## Code blocks and syntax highlighting
+
+A fenced block renders as `<pre><code class="language-js">`. The JSX renderers add a legacy `lang-js` alongside it; the HTML string renderer emits `language-js` only. Two ways to highlight, and which one you want depends on whether your highlighter takes a string or a DOM node.
+
+Highlighters that take the code as a string (react-syntax-highlighter, Shiki, KaTeX) go through `renderRule`, where the raw text and language are both in hand:
+
+```tsx
+import { RuleType } from 'markdown-to-jsx/react'
+import SyntaxHighlighter from 'react-syntax-highlighter'
+import TeX from '@matejmazur/react-katex'
+
+<Markdown
+  options={{
+    renderRule(next, node, renderChildren, state) {
+      if (node.type === RuleType.codeBlock) {
+        if (node.lang === 'latex') {
+          return <TeX as="div" key={state.key}>{String.raw`${node.text}`}</TeX>
+        }
+        return (
+          <SyntaxHighlighter key={state.key} language={node.lang}>
+            {node.text}
+          </SyntaxHighlighter>
+        )
+      }
+      return next()
+    },
+  }}
+>
+  {content}
+</Markdown>
+```
+
+Highlighters that mutate a mounted element (highlight.js) go through a `code` override that reads the class name:
+
+```tsx
+function HighlightedCode(props) {
+  const ref = React.useRef(null)
+
+  React.useEffect(() => {
+    if (ref.current && props.className?.includes('lang-') && window.hljs) {
+      window.hljs.highlightElement(ref.current)
+      // hljs skips an element it has already touched unless this is cleared
+      ref.current.removeAttribute('data-highlighted')
+    }
+  }, [props.className, props.children])
+
+  return <code {...props} ref={ref} />
+}
+
+;<Markdown options={{ overrides: { code: HighlightedCode } }}>{content}</Markdown>
+```
+
+The `code` override fires for inline backticks too, so branch on `props.className` when the two should render differently. To wrap or replace the surrounding block, override `pre`.
+
+## Streaming
+
+For markdown arriving token by token from an LLM or socket, `optimizeForStreaming` suppresses half-written syntax until its closing delimiter lands, so readers never see a flash of raw `**` or `[text](`.
+
+```tsx
+<Markdown options={{ optimizeForStreaming: true }}>{content}</Markdown>
+```
+
+Held back: unclosed HTML tags and comments, unclosed inline code, bold, italic, strikethrough, unclosed links, and a table before its first data row. Fenced code blocks stream visibly as they arrive.
+
+## AST
+
+`parser()` returns a flat array of block nodes. Each node has a `type` from the `RuleType` enum plus type-specific fields.
+
+```tsx
+parser('# Hi\n\nA **bold** word.')
+// [
+//   { type: RuleType.heading, level: 1, id: 'hi', children: [{ type: RuleType.text, text: 'Hi' }] },
+//   { type: RuleType.paragraph, children: [
+//       { type: RuleType.text, text: 'A ' },
+//       { type: RuleType.textFormatted, tag: 'strong', children: [...] },
+//       { type: RuleType.text, text: ' word.' },
+//   ]},
+// ]
+```
+
+Node shapes worth knowing:
+
+- `refCollection` `{ refs }` sits first in the array whenever the document defines link references or footnotes (footnote keys carry a `^` prefix). It is skipped during rendering; footnotes are pulled from it into a `<footer>`.
+- `heading` `{ level, id, children }`
+- `paragraph` / `blockQuote` `{ children }`, blockquote adding `alert` for GFM callouts
+- `codeBlock` `{ lang, text, attrs? }`
+- `orderedList` `{ items, start? }` / `unorderedList` `{ items }`, where `items` is an array of node arrays
+- `table` `{ header, cells, align }`
+- `htmlBlock` `{ tag, attrs?, children? }`, always fully parsed into `children`
+- `htmlSelfClosing` `{ tag, attrs? }`, `htmlComment` `{ text }`
+- `text` `{ text }`, `codeInline` `{ text }`, `textFormatted` `{ tag, children }`
+- `link` `{ target, title?, children }`, `image` `{ target, alt?, title? }`
+- `gfmTask` `{ completed }`, `footnoteReference` `{ target, text }`, `frontmatter` `{ text }`
+- `breakLine`, `breakThematic`, `ref`, `footnote`
+
+JSX props on custom components are parsed for you: arrays and objects through `JSON.parse` (`data={[1, 2]}` arrives as an array), booleans as booleans, and functions or free variables kept as strings.
+
+## Security
+
+Raw HTML is sanitized in every renderer, always, independent of `options.sanitizer`. Stripped before render: every `on*` inline handler, `javascript:`/`vbscript:`/non-image `data:` URLs in `href`, `src`, `action`, `formaction`, `poster`, `cite`, `background`, `data`, `longdesc`, and `xlink:href` (including entity-obfuscated variants), and `iframe` `srcdoc`. Dangerous tag names are escaped separately by `tagfilter`.
+
+`data:image/svg+xml` passes the filter and can still execute script if a user opens it as a top-level navigation, so treat SVG data URLs from untrusted authors with care.
+
+## Gotchas
+
+**A single newline does not make a line break.** Per CommonMark it is a soft break and renders as a space. For a `<br>`, end the line with two spaces or a backslash. This is the most common surprise by a wide margin.
+
+```ts
+compiler('a\nb') // "<p>a\nb</p>", renders as one line
+compiler('a  \nb') // "<p>a<br />\nb</p>", two trailing spaces
+compiler('a\\\nb') // "<p>a<br />\nb</p>", trailing backslash
+```
+
+**Indented template literals become code blocks.** Four leading spaces is indented-code syntax, so markdown written inside an indented template literal parses as a code block rather than as content. Dedent the string before passing it in.
+
+**Fenced code inside a raw HTML block stays literal.** The parser does not descend into a raw HTML block looking for markdown, so a fence inside a `<div>` renders as its own backticks. Put the fence at the top level and wrap it with a `pre` override if you need a container.
+
+**Leading whitespace in an HTML block is trimmed** relative to the first line's indentation, so the block does not collide with indented-code syntax.
+
+**Override keys are case-sensitive** and match the tag as written in the source.
+
+**Function props arrive as strings.** `onClick={() => …}` reaches your component as the text `"() => …"`, by design.
+
+## Do
+
+- Import the entry point matching your renderer (`markdown-to-jsx/react`, `/html`, …) so unused renderers drop out of the bundle.
+- Keep markdown in `.md` files or dedented variables. JSX collapses newlines, so markdown written inline in JSX loses its block structure.
+- Use `overrides` for tag-level changes and `renderRule` for node-level ones. `overrides` is the simpler tool; reach past it only when you need `node.lang`, `node.text`, or a normally-skipped node.
+- Set `optimizeForStreaming` for any incrementally arriving content.
+- Set `wrapper: null` with `compiler()` when you want the children array rather than a container element, or `wrapper: React.Fragment` to render at the parent's DOM level.
+- Pass `slugify: str => str` when headings are non-Latin and the default deburring would empty the id. The input is the heading's plain text (no link URLs or image alt). Duplicate heading text already gets unique ids (`foo`, `foo-1`); you do not need a stateful slugify closure for that.
+- On React Native, set `styles.text` once for document-wide font and color; every other key merges over its default, so name only the properties you are changing.
+
+## Don't
+
+- Don't enable `evalUnserializableExpressions` on content you did not write. It runs `eval()` on JSX prop expressions. For untrusted input, look up handlers by name in `renderRule` instead.
+- Don't disable `tagfilter` for user-generated content; it is the guard that escapes `<script>` and friends while keeping their source visible as inert text.
+- Don't reach for `dangerouslySetInnerHTML`. Raw HTML in the source already becomes real elements.
+- Don't call `compiler(..., { ast: true })`. That option is gone in v9; use `parser()`.
+- Don't pass `namedCodesToUnicode`. Removed in v9; the full HTML entity table is built in.
+
+## v9 notes
+
+- `ast: true` removed. Use `parser()`.
+- `namedCodesToUnicode` removed. All named entities decode by default.
+- `tagfilter` now defaults to `true`, so `script`, `iframe`, `style`, and similar tags are escaped (GFM leading-`<` form, body and closer kept) rather than rendered live. Pass `tagfilter: false` for the old behavior.
+- `parser`, `astToJSX`, `astToHTML`, `astToMarkdown`, `astToNative` and the per-renderer entry points are new in v9.
+- From v8: `MarkdownToJSX.ParserResult` is now `MarkdownToJSX.ASTNode`, and the `textBolded`/`textEmphasized`/`textMarked`/`textStrikethroughed` rule types collapsed into `RuleType.textFormatted` with a `tag` field.
+
+## Reference
+
+- [Full documentation](https://github.com/quantizor/markdown-to-jsx#readme): every option with prose and longer examples
+- [Releases](https://github.com/quantizor/markdown-to-jsx/releases): changelog
+- [Issues](https://github.com/quantizor/markdown-to-jsx/issues): bug reports and questions

@@ -125,6 +125,7 @@ type ArgoCompiler struct {
 
 	// DefaultServiceAccount is forwarded to all generated workflow pods.
 	DefaultServiceAccount string
+	marshalWorkflow       func(ArgoWorkflow) ([]byte, error)
 }
 
 // NewArgoCompiler returns a pre-configured ArgoCompiler.
@@ -132,6 +133,7 @@ func NewArgoCompiler() *ArgoCompiler {
 	return &ArgoCompiler{
 		DefaultImage:          "busybox:latest",
 		DefaultServiceAccount: "flowengine-executor",
+		marshalWorkflow:       marshalArgoWorkflow,
 	}
 }
 
@@ -162,10 +164,7 @@ func (c *ArgoCompiler) Compile(fsa *v1alpha1.FullStackApplication) (*CompiledMan
 	// 3. Build one ArgoTemplate per workflow node (leaf container templates)
 	var templates []ArgoTemplate
 	for _, node := range dag {
-		t, err := c.compileNodeTemplate(node, payloadVolume)
-		if err != nil {
-			return nil, fmt.Errorf("compiling node %q: %w", node.ID, err)
-		}
+		t := c.compileNodeTemplate(node, payloadVolume)
 		templates = append(templates, t)
 	}
 
@@ -233,7 +232,11 @@ func (c *ArgoCompiler) Compile(fsa *v1alpha1.FullStackApplication) (*CompiledMan
 		},
 	}
 
-	raw, err := json.MarshalIndent(wf, "", "  ")
+	marshal := c.marshalWorkflow
+	if marshal == nil {
+		marshal = marshalArgoWorkflow
+	}
+	raw, err := marshal(wf)
 	if err != nil {
 		return nil, fmt.Errorf("marshalling Argo Workflow CRD: %w", err)
 	}
@@ -247,7 +250,7 @@ func (c *ArgoCompiler) Compile(fsa *v1alpha1.FullStackApplication) (*CompiledMan
 }
 
 // compileNodeTemplate converts a single WorkflowNode into an Argo container template.
-func (c *ArgoCompiler) compileNodeTemplate(node v1alpha1.WorkflowNode, payloadVol corev1.Volume) (ArgoTemplate, error) {
+func (c *ArgoCompiler) compileNodeTemplate(node v1alpha1.WorkflowNode, payloadVol corev1.Volume) ArgoTemplate {
 	image := node.Image
 	if image == "" {
 		image = c.DefaultImage
@@ -319,7 +322,11 @@ func (c *ArgoCompiler) compileNodeTemplate(node v1alpha1.WorkflowNode, payloadVo
 	return ArgoTemplate{
 		Name:      sanitizeName(node.ID),
 		Container: &container,
-	}, nil
+	}
+}
+
+func marshalArgoWorkflow(wf ArgoWorkflow) ([]byte, error) {
+	return json.MarshalIndent(wf, "", "  ")
 }
 
 // ─────────────────────────────────────────────

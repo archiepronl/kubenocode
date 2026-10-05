@@ -3,6 +3,7 @@ module github.com/kubeworkflow/flowengine
 go 1.26.0
 
 require (
+	github.com/gorilla/websocket v1.5.3
 	github.com/nats-io/nats.go v1.35.0
 	github.com/swaggo/http-swagger v1.3.4
 	github.com/swaggo/swag v1.16.6

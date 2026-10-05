@@ -47,7 +47,7 @@ GIT_SHA    := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 OPERATOR_IMAGE := $(REGISTRY)/kttm-operator:$(IMAGE_TAG)
 SERVER_IMAGE   := $(REGISTRY)/kttm-server:$(IMAGE_TAG)
 
-COVERAGE_THRESHOLD := 60
+COVERAGE_THRESHOLD := 100
 COVERAGE_FILE      := coverage.out
 
 # ─────────────────────────────────────────────────────────────────
@@ -166,7 +166,7 @@ bootstrap: ## 🚀 Full first-time setup: tools + deps + cluster + verify
 
 cluster: ## 🔧 Create local K3d cluster (idempotent)
 	@echo "==> Creating K3d cluster '$(CLUSTER_NAME)'..."
-	@if k3d cluster list 2>/dev/null | grep -q "$(CLUSTER_NAME)"; then \
+	@if k3d cluster list 2>/dev/null | awk -v name="$(CLUSTER_NAME)" 'NR > 1 && $$1 == name { found = 1 } END { exit !found }'; then \
 	  echo "    Cluster '$(CLUSTER_NAME)' already exists — skipping creation"; \
 	else \
 	  k3d cluster create --config $(K3D_CONFIG); \
@@ -336,7 +336,7 @@ image-load: ## Load an already-built image into the K3d cluster
 #  TESTS
 # ═════════════════════════════════════════════════════════════════
 
-test-unit: ## 🧪 Unit tests (no external services, fast, race detector on)
+test-unit: ## 🧪 Unit tests (race detector + disposable NATS container)
 	@echo "==> Running unit tests..."
 	$(GO) test -race -count=1 -timeout=120s \
 	  -coverprofile=$(COVERAGE_FILE) -covermode=atomic \
@@ -373,11 +373,11 @@ test-coverage: ## 📊 Open HTML coverage report in browser
 _check-coverage:
 	@COVERAGE=$$($(GO) tool cover -func=$(COVERAGE_FILE) | grep total | awk '{print $$3}' | tr -d '%'); \
 	echo "    Total coverage: $${COVERAGE}%"; \
-	if [ 1 -eq $$(echo "$${COVERAGE} < 1" | bc) ]; then \
-	  echo "    FAIL: Coverage $${COVERAGE}% < threshold 1%"; \
+	if [ 1 -eq $$(echo "$${COVERAGE} < $(COVERAGE_THRESHOLD)" | bc) ]; then \
+	  echo "    FAIL: Coverage $${COVERAGE}% < threshold $(COVERAGE_THRESHOLD)%"; \
 	  exit 1; \
 	fi; \
-	echo "    OK: Coverage $${COVERAGE}% >= 1%"
+	echo "    OK: Coverage $${COVERAGE}% >= $(COVERAGE_THRESHOLD)%"
 
 # ═════════════════════════════════════════════════════════════════
 #  LINT / FMT / VET

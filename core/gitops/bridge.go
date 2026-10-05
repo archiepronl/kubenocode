@@ -9,12 +9,13 @@
 package gitops
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	kttmv1 "github.com/kubeworkflow/flowengine/core/api/v1alpha1"
 	"sigs.k8s.io/yaml"
@@ -27,13 +28,14 @@ import (
 // Bridge pushes KttmApp YAML snapshots to a Git repository after each successful
 // reconcile cycle. It scrubs all secret values before committing.
 type Bridge struct {
-	repoDir string // local clone directory (in-memory or emptyDir mount)
+	repoDir        string // local clone directory (in-memory or emptyDir mount)
+	renderSnapshot func(*kttmv1.KttmApp) ([]byte, error)
 }
 
 // New creates a new GitOps Bridge.
 // repoDir should be a writable path where the git clone is kept.
 func New(repoDir string) *Bridge {
-	return &Bridge{repoDir: repoDir}
+	return &Bridge{repoDir: repoDir, renderSnapshot: renderScrubbed}
 }
 
 // ─────────────────────────────────────────────
@@ -50,7 +52,11 @@ func (b *Bridge) Push(ctx context.Context, app *kttmv1.KttmApp) (commitSHA strin
 	cfg := spec.GitOps
 
 	// ── 1. Render scrubbed YAML (NFR-002: strip all secret values) ─────────
-	snapshot, err := renderScrubbed(app)
+	render := b.renderSnapshot
+	if render == nil {
+		render = renderScrubbed
+	}
+	snapshot, err := render(app)
 	if err != nil {
 		return "", fmt.Errorf("gitops: rendering scrubbed YAML: %w", err)
 	}
@@ -69,8 +75,7 @@ func (b *Bridge) Push(ctx context.Context, app *kttmv1.KttmApp) (commitSHA strin
 	// ── 4. Git add + commit + push ─────────────────────────────────────────
 	// In production: use go-git library with SSH key from spec.GitOps.SSHKeySecretRef
 	// Here we emit the equivalent shell commands as a placeholder.
-	commitMsg := fmt.Sprintf("kttm: auto-sync %s/%s @ %s [v%s]",
-		app.Namespace, app.Name, time.Now().UTC().Format(time.RFC3339), app.Spec.Version)
+	commitMsg := fmt.Sprintf("kttm: auto-sync %s/%s [v%s]", app.Namespace, app.Name, app.Spec.Version)
 
 	sha, err := gitCommitAndPush(ctx, b.repoDir, repoPath, commitMsg, cfg)
 	if err != nil {
@@ -153,8 +158,16 @@ func gitCommitAndPush(ctx context.Context, repoDir, filePath, commitMsg string, 
 	// r.Push(&git.PushOptions{Auth: sshAuth})
 	// return hash.String(), nil
 
-	// Scaffold: return a deterministic SHA based on timestamp
-	sha := fmt.Sprintf("%x", time.Now().UnixNano())[:12]
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	snapshot, err := os.ReadFile(filePath)
+	if err != nil {
+		return "", err
+	}
+	identity := fmt.Sprintf("%s\x00%s\x00%s", snapshot, cfg.Repo, cfg.Branch)
+	digest := sha256.Sum256([]byte(identity))
+	sha := hex.EncodeToString(digest[:])[:12]
 	fmt.Printf("[GitOps] [scaffold] git commit -m %q && git push → sha=%s\n", commitMsg, sha)
 	return sha, nil
 }

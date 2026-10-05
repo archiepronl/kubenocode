@@ -1,0 +1,96 @@
+import type { ChangeEvent, FocusEvent } from 'react';
+import { useCallback } from 'react';
+import type { FormContextType, WidgetProps, RJSFSchema, StrictRJSFSchema } from '@rjsf/utils';
+import {
+  ariaDescribedByIds,
+  enumOptionValueDecoder,
+  enumOptionValueEncoder,
+  enumOptionsDeselectValue,
+  enumOptionsIsSelected,
+  enumOptionsSelectValue,
+  getOptionValueFormat,
+  optionId,
+} from '@rjsf/utils';
+
+/** The `CheckboxesWidget` is a widget for rendering checkbox groups.
+ *  It is typically used to represent an array of enums.
+ *
+ * @param props - The `WidgetProps` for this component
+ */
+function CheckboxesWidget<T = any, S extends StrictRJSFSchema = RJSFSchema, F extends FormContextType = any>({
+  id,
+  disabled,
+  options,
+  value,
+  autofocus = false,
+  readonly,
+  onChange,
+  onBlur,
+  onFocus,
+  htmlName,
+}: WidgetProps<T, S, F>) {
+  const { inline = false, enumOptions, enumDisabled, emptyValue } = options;
+  const optionValueFormat = getOptionValueFormat(options);
+  const checkboxesValues = Array.isArray(value) ? value : [value];
+
+  const handleBlur = useCallback(
+    ({ target }: FocusEvent<HTMLInputElement>) =>
+      onBlur(id, enumOptionValueDecoder<S>(target?.value, enumOptions, optionValueFormat, emptyValue)),
+    [onBlur, id, enumOptions, emptyValue, optionValueFormat],
+  );
+
+  const handleFocus = useCallback(
+    ({ target }: FocusEvent<HTMLInputElement>) =>
+      onFocus(id, enumOptionValueDecoder<S>(target?.value, enumOptions, optionValueFormat, emptyValue)),
+    [onFocus, id, enumOptions, emptyValue, optionValueFormat],
+  );
+
+  return (
+    <div className='checkboxes' id={id}>
+      {Array.isArray(enumOptions) &&
+        enumOptions.map((option, index) => {
+          const checked = enumOptionsIsSelected<S>(option.value, checkboxesValues);
+          const itemDisabled = Array.isArray(enumDisabled) && enumDisabled.includes(option.value);
+          const disabledCls = disabled || itemDisabled || readonly ? 'disabled' : '';
+
+          const handleChange = (event: ChangeEvent<HTMLInputElement>) => {
+            if (event.target.checked) {
+              onChange(enumOptionsSelectValue<S>(index, checkboxesValues, enumOptions));
+            } else {
+              onChange(enumOptionsDeselectValue<S>(index, checkboxesValues, enumOptions));
+            }
+          };
+
+          const checkbox = (
+            <span>
+              <input
+                type='checkbox'
+                id={optionId(id, index)}
+                name={htmlName || id}
+                checked={checked}
+                value={enumOptionValueEncoder(option.value, index, optionValueFormat)}
+                disabled={disabled || itemDisabled || readonly}
+                autoFocus={autofocus && index === 0}
+                onChange={handleChange}
+                onBlur={handleBlur}
+                onFocus={handleFocus}
+                aria-describedby={ariaDescribedByIds(id)}
+              />
+              <span>{option.label}</span>
+            </span>
+          );
+          return inline ? (
+            <label key={String(option.value)} className={`checkbox-inline ${disabledCls}`}>
+              {checkbox}
+            </label>
+          ) : (
+            <div key={String(option.value)} className={`checkbox ${disabledCls}`}>
+              <label>{checkbox}</label>
+            </div>
+          );
+        })}
+    </div>
+  );
+}
+
+export default CheckboxesWidget;

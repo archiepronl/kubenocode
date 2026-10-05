@@ -173,6 +173,10 @@ func validateCmd(args []string) error {
 // exportCmd bundles a workflow and its dependencies into a self-contained tar.gz archive.
 // Implements FR-5.1 (Self-Contained App Bundles) and FR-5.2 (Immutable Air-Gapped Image Bundling).
 func exportCmd(args []string) error {
+	return exportCmdWithManifest(args, addStringToTar)
+}
+
+func exportCmdWithManifest(args []string, addManifest func(*tar.Writer, string, string) error) error {
 	fs := flag.NewFlagSet("export", flag.ContinueOnError)
 	output := fs.String("o", "", "Output file path (e.g., my-workflow.tar.gz)")
 	includeImages := fs.Bool("include-images", false, "Bundle container images via 'docker save' (increases bundle size)")
@@ -221,7 +225,7 @@ func exportCmd(args []string) error {
   "files": ["manifest.yaml", "bundle-info.json"]
 }`, time.Now().UTC().Format(time.RFC3339), Version, *includeImages)
 
-	if err := addStringToTar(tw, bundleManifest, "bundle-info.json"); err != nil {
+	if err := addManifest(tw, bundleManifest, "bundle-info.json"); err != nil {
 		return fmt.Errorf("adding bundle manifest: %w", err)
 	}
 
@@ -339,13 +343,19 @@ EXAMPLES:
 // ─────────────────────────────────────────────
 
 func addFileToTar(tw *tar.Writer, srcPath, destName string) error {
+	return addFileToTarWithStat(tw, srcPath, destName, func(file *os.File) (os.FileInfo, error) {
+		return file.Stat()
+	})
+}
+
+func addFileToTarWithStat(tw *tar.Writer, srcPath, destName string, stat func(*os.File) (os.FileInfo, error)) error {
 	f, err := os.Open(srcPath)
 	if err != nil {
 		return err
 	}
 	defer f.Close()
 
-	fi, err := f.Stat()
+	fi, err := stat(f)
 	if err != nil {
 		return err
 	}

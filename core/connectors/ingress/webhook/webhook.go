@@ -109,62 +109,7 @@ func (c *WebhookConnector) Read(ctx context.Context, cfg connectors.ConnectorCon
 
 	mux := http.NewServeMux()
 	mux.HandleFunc(path, func(w http.ResponseWriter, r *http.Request) {
-		// Method guard
-		if r.Method != method {
-			http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
-			return
-		}
-
-		// HMAC signature verification (if secret is configured)
-		if hmacSecret != "" {
-			sig := r.Header.Get("X-FlowEngine-Signature")
-			if sig == "" {
-				sig = r.Header.Get("X-Hub-Signature-256")
-			}
-			body, err := io.ReadAll(r.Body)
-			if err != nil {
-				http.Error(w, "Bad Request", http.StatusBadRequest)
-				return
-			}
-			if !verifyHMAC(body, sig, hmacSecret) {
-				http.Error(w, "Forbidden: invalid signature", http.StatusForbidden)
-				return
-			}
-			// Re-wrap body for downstream reading
-			r.Body = io.NopCloser(newBytesReader(body))
-		}
-
-		// Determine MIME type from Content-Type header (preserve original)
-		mimeType := r.Header.Get("Content-Type")
-		if mimeType == "" {
-			mimeType = "application/octet-stream"
-		}
-
-		// Ack immediately — body streaming happens asynchronously (FR-1.3 sub-ms ack)
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusAccepted)
-		fmt.Fprintf(w, `{"status":"accepted","timestamp":"%s"}`, time.Now().UTC().Format(time.RFC3339))
-
-		// Send the raw body stream to the channel
-		pr, pw := io.Pipe()
-		go func() {
-			defer pw.Close()
-			io.Copy(pw, r.Body)
-		}()
-
-		resultCh <- &connectors.ReadResult{
-			Envelope: connectors.EnvelopeRef{
-				MimeType:    mimeType,
-				PayloadSize: r.ContentLength,
-				Tags: map[string]string{
-					"webhook.path":       path,
-					"webhook.method":     r.Method,
-					"webhook.remoteAddr": r.RemoteAddr,
-					"webhook.userAgent":  r.UserAgent(),
-				},
-			},
-			Stream: pr,
-		}
+		handleWebhookRequest(w, r, resultCh, path, method, hmacSecret)
 	})
 
 	server := &http.Server{
@@ -200,6 +145,67 @@ func (c *WebhookConnector) Read(ctx context.Context, cfg connectors.ConnectorCon
 		_ = server.Shutdown(shutdownCtx)
 		return nil, ctx.Err()
 	}
+}
+
+func handleWebhookRequest(w http.ResponseWriter, r *http.Request, resultCh chan<- *connectors.ReadResult, path, method, hmacSecret string) {
+	if r.Method != method {
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	body, ok := readWebhookBody(w, r.Body)
+	if !ok {
+		return
+	}
+
+	if hmacSecret != "" {
+		sig := r.Header.Get("X-FlowEngine-Signature")
+		if sig == "" {
+			sig = r.Header.Get("X-Hub-Signature-256")
+		}
+		if !verifyHMAC(body, sig, hmacSecret) {
+			http.Error(w, "Forbidden: invalid signature", http.StatusForbidden)
+			return
+		}
+	}
+
+	mimeType := r.Header.Get("Content-Type")
+	if mimeType == "" {
+		mimeType = "application/octet-stream"
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusAccepted)
+	fmt.Fprintf(w, `{"status":"accepted","timestamp":"%s"}`, time.Now().UTC().Format(time.RFC3339))
+
+	pr, pw := io.Pipe()
+	go func() {
+		defer pw.Close()
+		pw.Write(body)
+	}()
+
+	resultCh <- &connectors.ReadResult{
+		Envelope: connectors.EnvelopeRef{
+			MimeType:    mimeType,
+			PayloadSize: r.ContentLength,
+			Tags: map[string]string{
+				"webhook.path":       path,
+				"webhook.method":     r.Method,
+				"webhook.remoteAddr": r.RemoteAddr,
+				"webhook.userAgent":  r.UserAgent(),
+			},
+		},
+		Stream: pr,
+	}
+}
+
+func readWebhookBody(w http.ResponseWriter, body io.Reader) ([]byte, bool) {
+	data, err := io.ReadAll(body)
+	if err != nil {
+		http.Error(w, "Bad Request", http.StatusBadRequest)
+		return nil, false
+	}
+	return data, true
 }
 
 // Write is not supported for webhook triggers (source-only connector).

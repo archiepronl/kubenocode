@@ -108,8 +108,9 @@ type TelemetryEvent struct {
 // Client is the FlowEngine NATS client. It wraps the NATS connection and JetStream context,
 // providing typed publish/subscribe methods for all FlowEngine message types.
 type Client struct {
-	nc *nats.Conn
-	js jetstream.JetStream
+	nc      *nats.Conn
+	js      jetstream.JetStream
+	marshal func(interface{}) ([]byte, error)
 }
 
 // Config holds connection parameters for the NATS client.
@@ -140,18 +141,20 @@ func DefaultConfig() Config {
 // NewClient establishes a NATS connection and configures the JetStream stream.
 // It blocks until the connection is established or the context is cancelled.
 func NewClient(ctx context.Context, cfg Config) (*Client, error) {
+	return newClient(ctx, cfg, func(nc *nats.Conn) (jetstream.JetStream, error) {
+		return jetstream.New(nc)
+	})
+}
+
+func newClient(ctx context.Context, cfg Config, createJetStream func(*nats.Conn) (jetstream.JetStream, error)) (*Client, error) {
 	opts := []nats.Option{
 		nats.Name("flowengine-client"),
 		nats.MaxReconnects(cfg.MaxReconnects),
 		nats.ReconnectWait(cfg.ReconnectWait),
 		nats.DisconnectErrHandler(func(nc *nats.Conn, err error) {
-			if err != nil {
-				fmt.Printf("[NATS] Disconnected: %v\n", err)
-			}
+			logNATSDisconnect(err)
 		}),
-		nats.ReconnectHandler(func(nc *nats.Conn) {
-			fmt.Printf("[NATS] Reconnected to %s\n", nc.ConnectedUrl())
-		}),
+		nats.ReconnectHandler(handleNATSReconnect),
 	}
 
 	if cfg.CredentialsFile != "" {
@@ -163,7 +166,7 @@ func NewClient(ctx context.Context, cfg Config) (*Client, error) {
 		return nil, fmt.Errorf("connecting to NATS at %s: %w", cfg.URL, err)
 	}
 
-	js, err := jetstream.New(nc)
+	js, err := createJetStream(nc)
 	if err != nil {
 		nc.Close()
 		return nil, fmt.Errorf("creating JetStream context: %w", err)
@@ -177,6 +180,20 @@ func NewClient(ctx context.Context, cfg Config) (*Client, error) {
 	}
 
 	return client, nil
+}
+
+func logNATSDisconnect(err error) {
+	if err != nil {
+		fmt.Printf("[NATS] Disconnected: %v\n", err)
+	}
+}
+
+func logNATSReconnect(url string) {
+	fmt.Printf("[NATS] Reconnected to %s\n", url)
+}
+
+func handleNATSReconnect(nc *nats.Conn) {
+	logNATSReconnect(nc.ConnectedUrl())
 }
 
 // ensureStream creates the FLOWENGINE JetStream stream if it doesn't exist.
@@ -195,6 +212,13 @@ func (c *Client) ensureStream(ctx context.Context) error {
 	return err
 }
 
+func (c *Client) marshalMessage(value interface{}) ([]byte, error) {
+	if c.marshal != nil {
+		return c.marshal(value)
+	}
+	return json.Marshal(value)
+}
+
 // ─────────────────────────────────────────────
 //  Publish methods
 // ─────────────────────────────────────────────
@@ -202,7 +226,7 @@ func (c *Client) ensureStream(ctx context.Context) error {
 // PublishEnvelope publishes an Envelope to the routing subject for the target node.
 // The envelope is serialized as JSON; the raw payload bytes are NOT included.
 func (c *Client) PublishEnvelope(ctx context.Context, namespace, workflowID, nodeID string, env interface{}) error {
-	data, err := json.Marshal(env)
+	data, err := c.marshalMessage(env)
 	if err != nil {
 		return fmt.Errorf("marshalling envelope: %w", err)
 	}
@@ -215,7 +239,7 @@ func (c *Client) PublishEnvelope(ctx context.Context, namespace, workflowID, nod
 // This is called by the web-renderer's NATS WebSocket bridge when a user clicks a button (FR-2.3).
 func (c *Client) PublishUIEvent(ctx context.Context, namespace string, event UIEvent) error {
 	event.Timestamp = time.Now().UTC()
-	data, err := json.Marshal(event)
+	data, err := c.marshalMessage(event)
 	if err != nil {
 		return fmt.Errorf("marshalling UI event: %w", err)
 	}
@@ -226,7 +250,7 @@ func (c *Client) PublishUIEvent(ctx context.Context, namespace string, event UIE
 // PublishStatus publishes a workflow status update.
 func (c *Client) PublishStatus(ctx context.Context, update StatusUpdate) error {
 	update.Timestamp = time.Now().UTC()
-	data, err := json.Marshal(update)
+	data, err := c.marshalMessage(update)
 	if err != nil {
 		return fmt.Errorf("marshalling status update: %w", err)
 	}
@@ -238,7 +262,7 @@ func (c *Client) PublishStatus(ctx context.Context, update StatusUpdate) error {
 // PublishTelemetry publishes per-node telemetry metrics for the AI Advisor.
 func (c *Client) PublishTelemetry(ctx context.Context, namespace string, event TelemetryEvent) error {
 	event.Timestamp = time.Now().UTC()
-	data, err := json.Marshal(event)
+	data, err := c.marshalMessage(event)
 	if err != nil {
 		return fmt.Errorf("marshalling telemetry event: %w", err)
 	}
@@ -279,13 +303,17 @@ func (c *Client) SubscribeEnvelopes(ctx context.Context, namespace, workflowID s
 func (c *Client) SubscribeUIEvents(namespace, sessionID string, handler func(event UIEvent)) (*nats.Subscription, error) {
 	subject := UIEventsSubject(namespace, sessionID)
 	return c.nc.Subscribe(subject, func(msg *nats.Msg) {
-		var event UIEvent
-		if err := json.Unmarshal(msg.Data, &event); err != nil {
-			fmt.Printf("[NATS] Failed to decode UI event: %v\n", err)
-			return
-		}
-		handler(event)
+		handleUIEvent(msg, handler)
 	})
+}
+
+func handleUIEvent(msg *nats.Msg, handler func(UIEvent)) {
+	var event UIEvent
+	if err := json.Unmarshal(msg.Data, &event); err != nil {
+		fmt.Printf("[NATS] Failed to decode UI event: %v\n", err)
+		return
+	}
+	handler(event)
 }
 
 // ─────────────────────────────────────────────

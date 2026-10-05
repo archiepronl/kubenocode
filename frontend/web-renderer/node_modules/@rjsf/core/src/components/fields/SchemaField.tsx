@@ -1,0 +1,371 @@
+import type { ComponentType } from 'react';
+import { useCallback, memo } from 'react';
+import type {
+  ErrorSchema,
+  Field,
+  FieldPathId,
+  FieldPathList,
+  FieldProps,
+  FieldTemplateProps,
+  FormContextType,
+  Registry,
+  RJSFMarkedSchema,
+  RJSFSchema,
+  StrictRJSFSchema,
+  UIOptionsType,
+} from '@rjsf/utils';
+import {
+  ADDITIONAL_PROPERTY_FLAG,
+  ANY_OF_KEY,
+  deepEquals,
+  descriptionId,
+  getSchemaType,
+  getTemplate,
+  getUiOptions,
+  ID_KEY,
+  isFormDataAvailable,
+  ONE_OF_KEY,
+  resolveUiSchema,
+  RJSF_REF_CYCLE_KEY,
+  shallowEquals,
+  shouldRenderOptionalField,
+  toFieldPathId,
+  isObject,
+  TranslatableString,
+  UI_OPTIONS_KEY,
+} from '@rjsf/utils';
+
+/** The map of component type to FieldName */
+const COMPONENT_TYPES: Record<string, string> = {
+  array: 'ArrayField',
+  boolean: 'BooleanField',
+  integer: 'NumberField',
+  number: 'NumberField',
+  object: 'ObjectField',
+  string: 'StringField',
+  null: 'NullField',
+};
+
+/** Computes and returns which `Field` implementation to return in order to render the field represented by the
+ * `schema`. The `uiOptions` are used to alter what potential `Field` implementation is actually returned. If no
+ * appropriate `Field` implementation can be found then a wrapper around `UnsupportedFieldTemplate` is used.
+ *
+ * @param schema - The schema from which to obtain the type
+ * @param uiOptions - The UI Options that may affect the component decision
+ * @param registry - The registry from which fields and templates are obtained
+ * @returns - The `Field` component that is used to render the actual field data
+ */
+function getFieldComponent<T = any, S extends StrictRJSFSchema = RJSFSchema, F extends FormContextType = any>(
+  schema: S,
+  uiOptions: UIOptionsType<T, S, F>,
+  registry: Registry<T, S, F>,
+): ComponentType<FieldProps<T, S, F>> {
+  const { field } = uiOptions;
+  const { fields, schemaUtils } = registry;
+  if (typeof field === 'function') {
+    return field;
+  }
+  if (typeof field === 'string' && field in fields) {
+    return fields[field] as ComponentType<FieldProps<T, S, F>>;
+  }
+
+  const schemaType = getSchemaType(schema);
+  const type: string = Array.isArray(schemaType) ? schemaType[0] : schemaType || '';
+
+  const schemaId = schema.$id;
+
+  let componentName = COMPONENT_TYPES[type];
+  if (schemaId && schemaId in fields) {
+    componentName = schemaId;
+  }
+
+  // If the schema uses 'anyOf' or 'oneOf' and is not a pure select (all-constant options),
+  // let the MultiSchemaField component handle the form display entirely.
+  // ObjectField is excluded: it renders shared properties (defined at the parent schema
+  // level) alongside the XxxOfField option selector.
+  // All other field types — including primitives and arrays — have no shared renderable
+  // properties, so the outer FieldComponent would only produce a spurious duplicate input.
+  if ((schema.anyOf || schema.oneOf) && !schemaUtils.isSelect(schema) && componentName !== 'ObjectField') {
+    return () => null;
+  }
+
+  return componentName in fields ? fields[componentName] : fields.FallbackField;
+}
+
+/** The `SchemaFieldRender` component is the work-horse of react-jsonschema-form, determining what kind of real field to
+ * render based on the `schema`, `uiSchema` and all the other props. It also deals with rendering the `anyOf` and
+ * `oneOf` fields.
+ *
+ * @param props - The `FieldProps` for this component
+ */
+function SchemaFieldRender<T = any, S extends StrictRJSFSchema = RJSFSchema, F extends FormContextType = any>(
+  props: FieldProps<T, S, F>,
+) {
+  const {
+    schema: _schema,
+    fieldPathId,
+    uiSchema: _uiSchema,
+    formData,
+    errorSchema,
+    name,
+    onChange,
+    onKeyRename,
+    onKeyRenameBlur,
+    onRemoveProperty,
+    required = false,
+    registry,
+    wasPropertyKeyModified = false,
+  } = props;
+  const { schemaUtils, globalFormOptions, globalUiOptions, fields } = registry;
+  const { AnyOfField: _AnyOfField, OneOfField: _OneOfField, CyclicSchemaField } = fields;
+  const fieldId = fieldPathId[ID_KEY];
+
+  /** Intermediary `onChange` handler for field components that will inject the `id` of the current field into the
+   * `onChange` chain if it is not already being provided from a deeper level in the hierarchy
+   */
+  const handleFieldComponentChange = useCallback(
+    (newFormData: T | undefined, path: FieldPathList, newErrorSchema?: ErrorSchema<T>, id?: string) => {
+      const theId = id || fieldId;
+      return onChange(newFormData, path, newErrorSchema, theId);
+    },
+    [fieldId, onChange],
+  );
+
+  // Stop $ref cycles: when resolveAllReferences detects a repeated property $ref it tags the schema with this flag.
+  // The check must come after all hook calls to satisfy React's rules of hooks.
+  if ((_schema as RJSFMarkedSchema)[RJSF_REF_CYCLE_KEY]) {
+    return <CyclicSchemaField {...props} />;
+  }
+
+  const uiSchema = resolveUiSchema<T, S, F>(_schema, _uiSchema, registry);
+  const uiOptions = getUiOptions<T, S, F>(uiSchema, globalUiOptions);
+  const FieldTemplate = getTemplate<'FieldTemplate', T, S, F>('FieldTemplate', registry, uiOptions);
+  const DescriptionFieldTemplate = getTemplate<'DescriptionFieldTemplate', T, S, F>(
+    'DescriptionFieldTemplate',
+    registry,
+    uiOptions,
+  );
+  const FieldHelpTemplate = getTemplate<'FieldHelpTemplate', T, S, F>('FieldHelpTemplate', registry, uiOptions);
+  const FieldErrorTemplate = getTemplate<'FieldErrorTemplate', T, S, F>('FieldErrorTemplate', registry, uiOptions);
+  const schema = schemaUtils.retrieveSchema(_schema, formData);
+
+  const FieldComponent = getFieldComponent<T, S, F>(schema, uiOptions, registry);
+
+  const isDeprecated = Boolean(schema.deprecated);
+  const deprecatedHandling = isDeprecated ? (uiOptions.deprecatedHandling ?? 'label') : undefined;
+
+  const disabled = Boolean(uiOptions.disabled ?? props.disabled) || deprecatedHandling === 'disable';
+  const readonly = Boolean(uiOptions.readonly ?? (props.readonly || props.schema.readOnly || schema.readOnly));
+  const uiSchemaHideError = uiOptions.hideError;
+  // Set hideError to the value provided in the uiSchema, otherwise stick with the prop to propagate to children
+  const hideError = uiSchemaHideError === undefined ? props.hideError : Boolean(uiSchemaHideError);
+  const autofocus = Boolean(uiOptions.autofocus ?? props.autofocus);
+  if (Object.keys(schema).length === 0) {
+    return null;
+  }
+
+  let displayLabel = schemaUtils.getDisplayLabel(schema, uiSchema, globalUiOptions);
+
+  /** If the schema `anyOf` or 'oneOf' can be rendered as a select control, don't render the selection and let
+   * `StringField` component handle rendering unless there is a field override and that field replaces the any or one of
+   */
+  const isReplacingAnyOrOneOf = uiOptions.field && uiOptions.fieldReplacesAnyOrOneOf === true;
+  let XxxOfField: Field<T, S, F> | undefined;
+  let XxxOfOptions: S[] | undefined;
+  // When rendering the `XxxOfField` we'll need to change the fieldPathId of the main component, remembering the
+  // fieldPathId of the children for the ObjectField and ArrayField
+  let fieldPathIdProps: { fieldPathId: FieldPathId; childFieldPathId?: FieldPathId } = { fieldPathId };
+  if ((ANY_OF_KEY in schema || ONE_OF_KEY in schema) && !isReplacingAnyOrOneOf && !schemaUtils.isSelect(schema)) {
+    if (schema[ANY_OF_KEY]) {
+      XxxOfField = _AnyOfField;
+      XxxOfOptions = schema[ANY_OF_KEY].map((xxxOfSchema) =>
+        schemaUtils.retrieveSchema(isObject(xxxOfSchema) ? (xxxOfSchema as S) : ({} as S), formData),
+      );
+    } else if (schema[ONE_OF_KEY]) {
+      XxxOfField = _OneOfField;
+      XxxOfOptions = schema[ONE_OF_KEY].map((xxxOfSchema) =>
+        schemaUtils.retrieveSchema(isObject(xxxOfSchema) ? (xxxOfSchema as S) : ({} as S), formData),
+      );
+    }
+    // When the anyOf/oneOf is an optional data control render AND it does not have form data, hide the label
+    const isOptionalRender = shouldRenderOptionalField<T, S, F>(registry, schema, required, uiSchema);
+    const hasFormData = isFormDataAvailable<T>(formData);
+    displayLabel = displayLabel && (!isOptionalRender || hasFormData);
+    fieldPathIdProps = {
+      childFieldPathId: fieldPathId,
+      // The main FieldComponent will add `XxxOf` onto the fieldPathId to avoid duplication with the rendering of the
+      // same FieldComponent by the `XxxOfField`
+      fieldPathId: toFieldPathId('XxxOf', globalFormOptions, fieldPathId),
+    };
+  }
+
+  const { __errors, ...fieldErrorSchema } = errorSchema || {};
+  // See #439: uiSchema: Don't pass consumed class names or style to child components
+  const {
+    'ui:classNames': consumedUiClassNames,
+    classNames: consumedClassNames,
+    'ui:style': consumedUiStyle,
+    ...fieldUiSchema
+  } = uiSchema;
+  if (UI_OPTIONS_KEY in fieldUiSchema) {
+    const {
+      classNames: consumedOptionClassNames,
+      style: consumedOptionStyle,
+      ...fieldUiOptions
+    } = fieldUiSchema[UI_OPTIONS_KEY]!;
+    fieldUiSchema[UI_OPTIONS_KEY] = fieldUiOptions;
+  }
+
+  const field = (
+    <FieldComponent
+      {...props}
+      onChange={handleFieldComponentChange}
+      {...fieldPathIdProps}
+      schema={schema}
+      uiSchema={fieldUiSchema}
+      disabled={disabled}
+      readonly={readonly}
+      hideError={hideError}
+      autofocus={autofocus}
+      errorSchema={fieldErrorSchema as ErrorSchema}
+      rawErrors={__errors}
+    />
+  );
+
+  const id = fieldPathId[ID_KEY];
+
+  // If this schema has a title defined, but the user has set a new key/label, retain their input.
+  let label;
+  if (wasPropertyKeyModified) {
+    label = name;
+  } else {
+    label =
+      ADDITIONAL_PROPERTY_FLAG in schema
+        ? name
+        : uiOptions.title || props.schema.title || schema.title || props.title || name;
+  }
+
+  if (deprecatedHandling === 'label') {
+    label = registry.translateString(TranslatableString.DeprecatedLabel, [label]);
+  }
+
+  const description = uiOptions.description || props.schema.description || schema.description || '';
+  const { help } = uiOptions;
+  const hidden = uiOptions.widget === 'hidden' || deprecatedHandling === 'hide';
+
+  const classNames = ['rjsf-field', `rjsf-field-${getSchemaType(schema)}`];
+  if (!hideError && __errors && __errors.length > 0) {
+    classNames.push('rjsf-field-error');
+  }
+  if (uiOptions.classNames) {
+    classNames.push(uiOptions.classNames);
+  }
+
+  const helpComponent = (
+    <FieldHelpTemplate
+      help={help}
+      fieldPathId={fieldPathId}
+      schema={schema}
+      uiSchema={uiSchema}
+      hasErrors={!hideError && __errors && __errors.length > 0}
+      registry={registry}
+    />
+  );
+  /*
+   * AnyOf/OneOf errors handled by child schema
+   * unless it can be rendered as select control
+   */
+  const errorsComponent =
+    hideError || (XxxOfField && !schemaUtils.isSelect(schema)) ? undefined : (
+      <FieldErrorTemplate
+        errors={__errors}
+        errorSchema={errorSchema}
+        fieldPathId={fieldPathId}
+        schema={schema}
+        uiSchema={uiSchema}
+        registry={registry}
+      />
+    );
+  const fieldProps: Omit<FieldTemplateProps<T, S, F>, 'children'> = {
+    description: (
+      <DescriptionFieldTemplate
+        id={descriptionId(id)}
+        description={description}
+        schema={schema}
+        uiSchema={uiSchema}
+        registry={registry}
+      />
+    ),
+    rawDescription: description,
+    help: helpComponent,
+    rawHelp: typeof help === 'string' ? help : undefined,
+    errors: errorsComponent,
+    rawErrors: hideError ? undefined : __errors,
+    fieldPathId,
+    id,
+    label,
+    hidden,
+    onChange,
+    onKeyRename,
+    onKeyRenameBlur,
+    onRemoveProperty,
+    required,
+    disabled,
+    readonly,
+    hideError,
+    displayLabel,
+    classNames: classNames.join(' ').trim(),
+    style: uiOptions.style,
+    formData,
+    schema,
+    uiSchema,
+    registry,
+  };
+
+  return (
+    <FieldTemplate {...fieldProps}>
+      <>
+        {field}
+        {XxxOfField && (
+          <XxxOfField
+            name={name}
+            disabled={disabled}
+            readonly={readonly}
+            hideError={hideError}
+            errorSchema={errorSchema}
+            formData={formData}
+            fieldPathId={fieldPathId}
+            onBlur={props.onBlur}
+            onChange={props.onChange}
+            onFocus={props.onFocus}
+            options={XxxOfOptions}
+            registry={registry}
+            required={required}
+            schema={schema}
+            uiSchema={uiSchema}
+          />
+        )}
+      </>
+    </FieldTemplate>
+  );
+}
+
+/** The `SchemaField` component wraps `SchemaFieldRender` with a custom memoization comparator that  determines whether it is necessary to rerender the component based on any props changes
+ * using `experimental_componentUpdateStrategy`.
+ *
+ * The cast to `typeof SchemaFieldRender` preserves the generic type signature (<T, S, F>) for consumers,
+ * since React.memo's return type erases generic parameters.
+ */
+const SchemaField = memo(SchemaFieldRender, (prevProps, nextProps) => {
+  const { experimental_componentUpdateStrategy = 'customDeep' } = nextProps.registry.globalFormOptions;
+  if (experimental_componentUpdateStrategy === 'always') {
+    return false; // always re-render — never consider props equal
+  }
+  if (experimental_componentUpdateStrategy === 'shallow') {
+    return shallowEquals(prevProps, nextProps);
+  }
+  // default: 'customDeep'
+  return deepEquals(prevProps, nextProps);
+}) as unknown as typeof SchemaFieldRender;
+
+export default SchemaField;

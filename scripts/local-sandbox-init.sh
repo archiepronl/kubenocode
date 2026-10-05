@@ -169,20 +169,9 @@ success "Go dependencies ready"
 # ─────────────────────────────────────────────────────────────────
 header "Step 3 / 6 — K3d Cluster"
 
-if k3d cluster list 2>/dev/null | grep -q "$CLUSTER_NAME"; then
-  warn "Cluster '$CLUSTER_NAME' already exists"
-  echo -n "  Delete and recreate? [y/N] "
-  read -r response
-  response=${response:-N}
-  if [[ "$response" =~ ^[Yy] ]]; then
-    info "Deleting existing cluster..."
-    k3d cluster delete "$CLUSTER_NAME"
-    info "Creating new cluster from $K3D_CONFIG..."
-    k3d cluster create --config "$K3D_CONFIG"
-    success "Cluster recreated"
-  else
-    info "Keeping existing cluster"
-  fi
+if k3d cluster list 2>/dev/null | awk -v name="$CLUSTER_NAME" 'NR > 1 && $1 == name { found = 1 } END { exit !found }'; then
+  info "Reusing existing cluster '$CLUSTER_NAME'"
+  kubectl config use-context "k3d-$CLUSTER_NAME" >/dev/null
 else
   info "Creating K3d cluster from $K3D_CONFIG..."
   k3d cluster create --config "$K3D_CONFIG"

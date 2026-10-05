@@ -25,7 +25,6 @@ else
       --agents 2 \
       --port "8080:80@loadbalancer" \
       --k3s-arg "--disable=traefik@server:0" \
-      --k3s-arg "--disable=servicelb@server:0" \
       --k3s-arg "--kube-apiserver-arg=feature-gates=InPlacePodVerticalScaling=true@server:0" \
       --timeout 5m
 fi

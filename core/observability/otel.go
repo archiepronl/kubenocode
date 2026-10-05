@@ -32,7 +32,7 @@ import (
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
-	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
+	semconv "go.opentelemetry.io/otel/semconv/v1.43.0"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -104,12 +104,22 @@ type Instruments struct {
 //  Setup
 // ─────────────────────────────────────────────
 
-// Setup initializes the OpenTelemetry SDK: tracer provider, meter provider,
-// and all metric instruments. Returns a shutdown function that must be called
-// on application exit to flush pending telemetry.
-func Setup(ctx context.Context, cfg Config) (*Instruments, func(), error) {
-	// Build the service resource
-	res, err := resource.Merge(
+type setupDependencies struct {
+	buildResource       func(Config) (*resource.Resource, error)
+	createExporter      func(context.Context, string) (sdktrace.SpanExporter, func(context.Context) error, error)
+	registerInstruments func(metric.Meter) (*Instruments, error)
+}
+
+func defaultSetupDependencies() setupDependencies {
+	return setupDependencies{
+		buildResource:       buildServiceResource,
+		createExporter:      createOTLPTraceExporter,
+		registerInstruments: registerInstruments,
+	}
+}
+
+func buildServiceResource(cfg Config) (*resource.Resource, error) {
+	return resource.Merge(
 		resource.Default(),
 		resource.NewWithAttributes(
 			semconv.SchemaURL,
@@ -117,6 +127,29 @@ func Setup(ctx context.Context, cfg Config) (*Instruments, func(), error) {
 			semconv.ServiceVersion(cfg.ServiceVersion),
 		),
 	)
+}
+
+func createOTLPTraceExporter(ctx context.Context, endpoint string) (sdktrace.SpanExporter, func(context.Context) error, error) {
+	exporter, err := otlptracegrpc.New(ctx,
+		otlptracegrpc.WithEndpoint(endpoint),
+		otlptracegrpc.WithInsecure(),
+	)
+	if err != nil {
+		return nil, nil, err
+	}
+	return exporter, exporter.Shutdown, nil
+}
+
+// Setup initializes the OpenTelemetry SDK: tracer provider, meter provider,
+// and all metric instruments. Returns a shutdown function that must be called
+// on application exit to flush pending telemetry.
+func Setup(ctx context.Context, cfg Config) (*Instruments, func(), error) {
+	return setup(ctx, cfg, defaultSetupDependencies())
+}
+
+func setup(ctx context.Context, cfg Config, dependencies setupDependencies) (*Instruments, func(), error) {
+	// Build the service resource
+	res, err := dependencies.buildResource(cfg)
 	if err != nil {
 		return nil, nil, fmt.Errorf("building OTel resource: %w", err)
 	}
@@ -130,15 +163,12 @@ func Setup(ctx context.Context, cfg Config) (*Instruments, func(), error) {
 	}
 
 	if cfg.OTLPEndpoint != "" {
-		exp, err := otlptracegrpc.New(ctx,
-			otlptracegrpc.WithEndpoint(cfg.OTLPEndpoint),
-			otlptracegrpc.WithInsecure(), // TLS configured externally via SPIFFE/SPIRE mTLS
-		)
+		exp, shutdownExporter, err := dependencies.createExporter(ctx, cfg.OTLPEndpoint)
 		if err != nil {
 			return nil, nil, fmt.Errorf("creating OTLP trace exporter: %w", err)
 		}
 		tracerOpts = append(tracerOpts, sdktrace.WithBatcher(exp))
-		traceShutdown = exp.Shutdown
+		traceShutdown = shutdownExporter
 	}
 
 	tp := sdktrace.NewTracerProvider(tracerOpts...)
@@ -153,7 +183,7 @@ func Setup(ctx context.Context, cfg Config) (*Instruments, func(), error) {
 	Meter = mp.Meter(instrumentationName)
 
 	// ── Register instruments ──────────────────────────────────────────────────
-	inst, err := registerInstruments(Meter)
+	inst, err := dependencies.registerInstruments(Meter)
 	if err != nil {
 		return nil, nil, fmt.Errorf("registering OTel instruments: %w", err)
 	}
@@ -162,22 +192,22 @@ func Setup(ctx context.Context, cfg Config) (*Instruments, func(), error) {
 	shutdown := func() {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		if err := tp.Shutdown(shutdownCtx); err != nil {
-			fmt.Printf("[OTel] Error shutting down tracer provider: %v\n", err)
-		}
-		if err := mp.Shutdown(shutdownCtx); err != nil {
-			fmt.Printf("[OTel] Error shutting down meter provider: %v\n", err)
-		}
+		logShutdownError("tracer provider", tp.Shutdown(shutdownCtx))
+		logShutdownError("meter provider", mp.Shutdown(shutdownCtx))
 		if traceShutdown != nil {
-			if err := traceShutdown(shutdownCtx); err != nil {
-				fmt.Printf("[OTel] Error shutting down OTLP exporter: %v\n", err)
-			}
+			logShutdownError("OTLP exporter", traceShutdown(shutdownCtx))
 		}
 	}
 
 	fmt.Printf("[OTel] Initialized — service=%s version=%s endpoint=%s\n",
 		cfg.ServiceName, cfg.ServiceVersion, cfg.OTLPEndpoint)
 	return inst, shutdown, nil
+}
+
+func logShutdownError(component string, err error) {
+	if err != nil {
+		fmt.Printf("[OTel] Error shutting down %s: %v\n", component, err)
+	}
 }
 
 // registerInstruments creates all metric instruments on the given meter.
