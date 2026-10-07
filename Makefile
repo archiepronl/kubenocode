@@ -293,13 +293,13 @@ build-server: ## Build API server binary
 	  -o bin/kttm-server ./cmd/server/
 	@echo "    OK: bin/kttm-server"
 
-build-cli: ## Build flowengine CLI binary
-	@echo "==> Building flowengine CLI ($(GOOS)/$(GOARCH))..."
+build-cli: ## Build nextkube CLI binary
+	@echo "==> Building nextkube CLI ($(GOOS)/$(GOARCH))..."
 	@mkdir -p bin
 	@CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) $(GO) build \
 	  -ldflags="-X main.version=$(IMAGE_TAG)" \
-	  -o bin/flowengine ./cmd/flowengine/ 2>/dev/null || \
-	  echo "    SKIP: cmd/flowengine not yet implemented"
+	  -o bin/nextkube ./cmd/nextkube/ 2>/dev/null || \
+	  echo "    SKIP: cmd/nextkube not yet implemented"
 
 build-web: ## Build the frontend SPA
 	@echo "==> Building KTTM SPA..."

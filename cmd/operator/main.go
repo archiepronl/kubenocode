@@ -1,4 +1,4 @@
-// Package main is the entrypoint for the FlowEngine Kubernetes Operator.
+// Package main is the entrypoint for the NextKube Kubernetes Operator.
 //
 // It bootstraps the controller-runtime manager, registers the FullStackApplication
 // CRD scheme, and starts the reconcile loop. The manager handles leader election,
@@ -67,7 +67,7 @@ func main() {
 		},
 		HealthProbeBindAddress: probeAddr,
 		LeaderElection:         enableLeaderElection,
-		LeaderElectionID:       "flowengine-operator-leader",
+		LeaderElectionID:       "nextkube-operator-leader",
 	})
 	if err != nil {
 		setupLog.Error(err, "Unable to create manager")
@@ -113,7 +113,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	setupLog.Info("Starting FlowEngine Operator",
+	setupLog.Info("Starting NextKube Operator",
 		"backend", executionBackend,
 		"metricsAddr", metricsAddr,
 		"probeAddr", probeAddr,

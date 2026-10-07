@@ -1,4 +1,4 @@
-// Package cli implements the flowengine command-line tool commands.
+// Package cli implements the nextkube command-line tool commands.
 //
 // Uses a simple flag-based approach to avoid heavy dependencies in the CLI binary.
 // In production, this would use cobra/viper for richer CLI ergonomics.
@@ -53,7 +53,7 @@ func Execute() error {
 		printUsage()
 		return nil
 	default:
-		return fmt.Errorf("unknown command %q — run 'flowengine help' for usage", os.Args[1])
+		return fmt.Errorf("unknown command %q — run 'nextkube help' for usage", os.Args[1])
 	}
 }
 
@@ -73,7 +73,7 @@ func runCmd(args []string) error {
 		return err
 	}
 	if fs.NArg() < 1 {
-		return fmt.Errorf("usage: flowengine run [--runtime docker|podman] <workflow.yaml>")
+		return fmt.Errorf("usage: nextkube run [--runtime docker|podman] <workflow.yaml>")
 	}
 
 	workflowFile := fs.Arg(0)
@@ -83,7 +83,7 @@ func runCmd(args []string) error {
 	}
 
 	// Parse the workflow YAML (simplified: real impl uses sigs.k8s.io/yaml + CRD unmarshalling)
-	fmt.Printf("FlowEngine CLI v%s\n", Version)
+	fmt.Printf("NextKube CLI v%s\n", Version)
 	fmt.Printf("Runtime:   %s\n", *runtime)
 	fmt.Printf("Namespace: %s\n", *namespace)
 	fmt.Printf("Workflow:  %s (%d bytes)\n", workflowFile, len(data))
@@ -106,9 +106,9 @@ func runCmd(args []string) error {
 	//    d. Pass output via shared tmpdir volume to next step
 	// 5. Report final status
 
-	fmt.Printf("[flowengine] Executing workflow: %s\n", workflowFile)
-	fmt.Printf("[flowengine] Using %s runtime — no cluster required\n", *runtime)
-	fmt.Printf("[flowengine] ✓ Workflow complete\n")
+	fmt.Printf("[nextkube] Executing workflow: %s\n", workflowFile)
+	fmt.Printf("[nextkube] Using %s runtime — no cluster required\n", *runtime)
+	fmt.Printf("[nextkube] ✓ Workflow complete\n")
 	return nil
 }
 
@@ -125,7 +125,7 @@ func validateCmd(args []string) error {
 		return err
 	}
 	if fs.NArg() < 1 {
-		return fmt.Errorf("usage: flowengine validate [--json] <workflow.yaml>")
+		return fmt.Errorf("usage: nextkube validate [--json] <workflow.yaml>")
 	}
 
 	workflowFile := fs.Arg(0)
@@ -134,7 +134,7 @@ func validateCmd(args []string) error {
 		return fmt.Errorf("reading workflow file %q: %w", workflowFile, err)
 	}
 
-	fmt.Printf("[flowengine] Validating: %s\n", workflowFile)
+	fmt.Printf("[nextkube] Validating: %s\n", workflowFile)
 
 	// In production: unmarshal into FSA struct, run GraphLinter.Lint()
 	// result := linter.New().Lint(fsa.Spec.WorkflowDAG)
@@ -173,10 +173,10 @@ func validateCmd(args []string) error {
 // exportCmd bundles a workflow and its dependencies into a self-contained tar.gz archive.
 // Implements FR-5.1 (Self-Contained App Bundles) and FR-5.2 (Immutable Air-Gapped Image Bundling).
 func exportCmd(args []string) error {
-	return exportCmdWithManifest(args, addStringToTar)
+	return exportCmdWithManifest(args, addStringToTar, addStringToTar)
 }
 
-func exportCmdWithManifest(args []string, addManifest func(*tar.Writer, string, string) error) error {
+func exportCmdWithManifest(args []string, addManifest func(*tar.Writer, string, string) error, addString func(*tar.Writer, string, string) error) error {
 	fs := flag.NewFlagSet("export", flag.ContinueOnError)
 	output := fs.String("o", "", "Output file path (e.g., my-workflow.tar.gz)")
 	includeImages := fs.Bool("include-images", false, "Bundle container images via 'docker save' (increases bundle size)")
@@ -185,7 +185,7 @@ func exportCmdWithManifest(args []string, addManifest func(*tar.Writer, string, 
 		return err
 	}
 	if fs.NArg() < 1 {
-		return fmt.Errorf("usage: flowengine export [--o output.tar.gz] [--include-images] <workflow.yaml>")
+		return fmt.Errorf("usage: nextkube export [--o output.tar.gz] [--include-images] <workflow.yaml>")
 	}
 
 	workflowFile := fs.Arg(0)
@@ -194,9 +194,9 @@ func exportCmdWithManifest(args []string, addManifest func(*tar.Writer, string, 
 		*output = base + "-bundle.tar.gz"
 	}
 
-	fmt.Printf("[flowengine] Exporting workflow: %s → %s\n", workflowFile, *output)
+	fmt.Printf("[nextkube] Exporting workflow: %s → %s\n", workflowFile, *output)
 	if *includeImages {
-		fmt.Printf("[flowengine] Including container images (docker save)\n")
+		fmt.Printf("[nextkube] Including container images (docker save)\n")
 	}
 
 	// Create the output tar.gz bundle
@@ -211,8 +211,16 @@ func exportCmdWithManifest(args []string, addManifest func(*tar.Writer, string, 
 	tw := tar.NewWriter(gw)
 	defer tw.Close()
 
+	data, err := os.ReadFile(workflowFile)
+	if err != nil {
+		return fmt.Errorf("reading workflow file %q: %w", workflowFile, err)
+	}
+
+	// Scrub sensitive values before adding to bundle
+	scrubbedData := scrubSecrets(data)
+
 	// Add the workflow YAML
-	if err := addFileToTar(tw, workflowFile, "manifest.yaml"); err != nil {
+	if err := addString(tw, string(scrubbedData), "manifest.yaml"); err != nil {
 		return fmt.Errorf("adding workflow to bundle: %w", err)
 	}
 
@@ -234,9 +242,9 @@ func exportCmdWithManifest(args []string, addManifest func(*tar.Writer, string, 
 	//   exec.Command("docker", "save", "-o", "images/<name>.tar", imageURI)
 	//   addFileToTar(tw, "images/<name>.tar", "images/<name>.tar")
 
-	fmt.Printf("[flowengine] ✓ Bundle created: %s\n", *output)
-	fmt.Printf("[flowengine] Transfer this file to your air-gapped environment and run:\n")
-	fmt.Printf("[flowengine]   flowengine import %s\n", *output)
+	fmt.Printf("[nextkube] ✓ Bundle created: %s\n", *output)
+	fmt.Printf("[nextkube] Transfer this file to your air-gapped environment and run:\n")
+	fmt.Printf("[nextkube]   nextkube import %s\n", *output)
 	return nil
 }
 
@@ -255,14 +263,14 @@ func importCmd(args []string) error {
 		return err
 	}
 	if fs.NArg() < 1 {
-		return fmt.Errorf("usage: flowengine import [--registry <host>] [--apply] <bundle.tar.gz>")
+		return fmt.Errorf("usage: nextkube import [--registry <host>] [--apply] <bundle.tar.gz>")
 	}
 
 	bundleFile := fs.Arg(0)
-	fmt.Printf("[flowengine] Importing bundle: %s\n", bundleFile)
+	fmt.Printf("[nextkube] Importing bundle: %s\n", bundleFile)
 
 	if *registry != "" {
-		fmt.Printf("[flowengine] Loading images → pushing to %s\n", *registry)
+		fmt.Printf("[nextkube] Loading images → pushing to %s\n", *registry)
 		// In production:
 		// 1. Extract images/*.tar from bundle
 		// 2. docker load -i images/<name>.tar
@@ -272,12 +280,12 @@ func importCmd(args []string) error {
 	}
 
 	if *applyToCluster {
-		fmt.Printf("[flowengine] Applying workflow manifest to cluster\n")
+		fmt.Printf("[nextkube] Applying workflow manifest to cluster\n")
 		// In production:
 		// kubectl apply -f extracted/manifest.yaml
 	}
 
-	fmt.Printf("[flowengine] ✓ Import complete\n")
+	fmt.Printf("[nextkube] ✓ Import complete\n")
 	return nil
 }
 
@@ -286,7 +294,7 @@ func importCmd(args []string) error {
 // ─────────────────────────────────────────────
 
 func versionCmd() error {
-	fmt.Printf("flowengine %s\n", Version)
+	fmt.Printf("nextkube %s\n", Version)
 	fmt.Printf("  git commit: %s\n", GitCommit)
 	fmt.Printf("  built:      %s\n", BuildDate)
 	return nil
@@ -297,10 +305,10 @@ func versionCmd() error {
 // ─────────────────────────────────────────────
 
 func printUsage() {
-	fmt.Print(`flowengine — Cloud-Native Workflow & No-Code App Engine CLI
+	fmt.Print(`nextkube — Cloud-Native Workflow & No-Code App Engine CLI
 
 USAGE:
-  flowengine <command> [flags] [arguments]
+  nextkube <command> [flags] [arguments]
 
 COMMANDS:
   run       <workflow.yaml>   Execute a workflow locally (no cluster required)
@@ -325,16 +333,16 @@ FLAGS (import):
 
 EXAMPLES:
   # Run a workflow locally with Docker (no cluster needed)
-  flowengine run my-etl-pipeline.yaml
+  nextkube run my-etl-pipeline.yaml
 
   # Validate a workflow before deploying
-  flowengine validate --json my-etl-pipeline.yaml
+  nextkube validate --json my-etl-pipeline.yaml
 
   # Bundle for air-gapped deployment (includes container images)
-  flowengine export --include-images --o bundle.tar.gz my-etl-pipeline.yaml
+  nextkube export --include-images --o bundle.tar.gz my-etl-pipeline.yaml
 
   # Import bundle into air-gapped cluster with private registry
-  flowengine import --registry registry.local:5000 bundle.tar.gz
+  nextkube import --registry registry.local:5000 bundle.tar.gz
 `)
 }
 
@@ -388,4 +396,22 @@ func addStringToTar(tw *tar.Writer, content, destName string) error {
 	}
 	_, err := tw.Write(data)
 	return err
+}
+
+func scrubSecrets(data []byte) []byte {
+	// A simple line-by-line regex or string matcher for the demo.
+	// In production, unmarshal YAML, scrub specific spec fields, and marshal back.
+	lines := strings.Split(string(data), "\n")
+	for i, line := range lines {
+		lower := strings.ToLower(line)
+		if strings.Contains(lower, "password") ||
+			strings.Contains(lower, "token") ||
+			strings.Contains(lower, "secret") {
+			parts := strings.SplitN(line, ":", 2)
+			if len(parts) == 2 {
+				lines[i] = parts[0] + ": \"***SCRUBBED***\""
+			}
+		}
+	}
+	return []byte(strings.Join(lines, "\n"))
 }

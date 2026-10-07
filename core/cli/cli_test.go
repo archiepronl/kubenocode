@@ -35,7 +35,7 @@ func TestExecuteDispatchAndUsage(t *testing.T) {
 		{name: "no arguments", want: "USAGE:"},
 		{name: "help", args: []string{"help"}, want: "COMMANDS:"},
 		{name: "short help", args: []string{"-h"}, want: "FLAGS (run):"},
-		{name: "version", args: []string{"version"}, want: "flowengine dev"},
+		{name: "version", args: []string{"version"}, want: "nextkube dev"},
 		{name: "unknown command", args: []string{"mystery"}, wantErr: `unknown command "mystery"`},
 	}
 	for _, tt := range tests {
@@ -129,7 +129,7 @@ func TestExportImportAndVersionCommands(t *testing.T) {
 		t.Fatal("exportCmd() accepted an unknown flag")
 	}
 	missingOutput := filepath.Join(t.TempDir(), "missing-bundle.tar.gz")
-	if err := exportCmd([]string{"-o", missingOutput, filepath.Join(t.TempDir(), "missing.yaml")}); err == nil || !strings.Contains(err.Error(), "adding workflow") {
+	if err := exportCmd([]string{"-o", missingOutput, filepath.Join(t.TempDir(), "missing.yaml")}); err == nil || !strings.Contains(err.Error(), "reading workflow file") {
 		t.Fatalf("exportCmd(missing file) error = %v", err)
 	}
 	if err := exportCmd([]string{"-o", t.TempDir(), workflow}); err == nil || !strings.Contains(err.Error(), "creating output file") {
@@ -138,9 +138,17 @@ func TestExportImportAndVersionCommands(t *testing.T) {
 	manifestError := errors.New("manifest write failed")
 	if err := exportCmdWithManifest([]string{"-o", filepath.Join(t.TempDir(), "failed.tar.gz"), workflow}, func(*tar.Writer, string, string) error {
 		return manifestError
-	}); !errors.Is(err, manifestError) || !strings.Contains(err.Error(), "adding bundle manifest") {
+	}, addStringToTar); !errors.Is(err, manifestError) || !strings.Contains(err.Error(), "adding bundle manifest") {
 		t.Fatalf("exportCmdWithManifest() error = %v, want wrapped manifest error", err)
 	}
+
+	stringError := errors.New("string write failed")
+	if err := exportCmdWithManifest([]string{"-o", filepath.Join(t.TempDir(), "failed-str.tar.gz"), workflow}, addStringToTar, func(*tar.Writer, string, string) error {
+		return stringError
+	}); !errors.Is(err, stringError) || !strings.Contains(err.Error(), "adding workflow to bundle") {
+		t.Fatalf("exportCmdWithManifest() string error = %v, want wrapped string error", err)
+	}
+
 	archivePath := filepath.Join(t.TempDir(), "bundle.tar.gz")
 	output, err := captureStdout(func() error { return exportCmd([]string{"--include-images", "-o", archivePath, workflow}) })
 	if err != nil || !strings.Contains(output, "Including container images") {
@@ -238,7 +246,7 @@ func TestTarHelpersErrorAndSuccessPaths(t *testing.T) {
 func executeCaptured(t *testing.T, args ...string) (string, error) {
 	t.Helper()
 	previous := os.Args
-	os.Args = append([]string{"flowengine"}, args...)
+	os.Args = append([]string{"nextkube"}, args...)
 	t.Cleanup(func() { os.Args = previous })
 	return captureStdout(Execute)
 }
@@ -290,4 +298,35 @@ func readBundle(t *testing.T, path string) map[string]string {
 		entries[header.Name] = string(data)
 	}
 	return entries
+}
+
+func TestScrubSecrets(t *testing.T) {
+	input := `
+apiVersion: flowengine.io/v1alpha1
+kind: KttmApp
+spec:
+  nodes:
+    - id: node1
+      params:
+        password: my-secret-password
+        token: some-jwt-token
+        username: admin
+        aws_secret_key: abc123def
+`
+	expected := `
+apiVersion: flowengine.io/v1alpha1
+kind: KttmApp
+spec:
+  nodes:
+    - id: node1
+      params:
+        password: "***SCRUBBED***"
+        token: "***SCRUBBED***"
+        username: admin
+        aws_secret_key: "***SCRUBBED***"
+`
+	result := scrubSecrets([]byte(input))
+	if string(result) != expected {
+		t.Errorf("expected %q, got %q", expected, string(result))
+	}
 }

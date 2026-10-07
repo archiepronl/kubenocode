@@ -14,7 +14,7 @@ import (
 
 // @title KubeWorkFlow API
 // @version 1.0
-// @description Core Execution Engine API for managing the FlowEngine graph
+// @description Core Execution Engine API for managing the NextKube graph
 // @BasePath /
 type server struct{}
 
@@ -23,7 +23,7 @@ type server struct{}
 // @Success 200 {object} map[string]string
 // @Router /healthz [get]
 func (server) health(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "service": "flowengine-api"})
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "service": "nextkube-api"})
 }
 
 // @Summary Get Layout Schema
@@ -103,9 +103,14 @@ func main() {
 	handler.HandleFunc("POST /api/test/webhook", bff.HandleCreateWebhookTest)
 	handler.HandleFunc("GET /api/test/webhook/{id}", bff.HandleGetWebhookTest)
 
+	// BFF Routes for RBAC & Auth
+	handler.HandleFunc("GET /api/auth/permissions", bff.HandleGetPermissions)
+	handler.HandleFunc("GET /api/auth/users", bff.HandleListUsers)
+	handler.HandleFunc("PUT /api/auth/users/{username}/permissions", bff.HandleUpdateUserPermissions)
+
 	// Swagger UI route
 	handler.HandleFunc("/api/docs/", httpSwagger.WrapHandler)
 
-	log.Printf("flowengine API listening on :%s", port)
+	log.Printf("nextkube API listening on :%s", port)
 	log.Fatal(http.ListenAndServe(":"+port, handler))
 }
