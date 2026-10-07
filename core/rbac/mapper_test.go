@@ -142,7 +142,7 @@ func newTestMapper(t *testing.T, allowed func(*authv1.SubjectAccessReview) bool,
 			w.WriteHeader(http.StatusInternalServerError)
 			_ = json.NewEncoder(w).Encode(metav1.Status{
 				TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Status"},
-				Status: metav1.StatusFailure, Message: "authorization API unavailable", Code: http.StatusInternalServerError,
+				Status:   metav1.StatusFailure, Message: "authorization API unavailable", Code: http.StatusInternalServerError,
 			})
 			return
 		}

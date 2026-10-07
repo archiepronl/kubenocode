@@ -346,7 +346,7 @@ test-unit: ## 🧪 Unit tests (race detector + disposable NATS container)
 test-integration: ## 🧪 Integration tests (testcontainers: real Postgres + NATS + MinIO)
 	@echo "==> Running integration tests (testcontainers)..."
 	@which docker >/dev/null 2>&1 || (echo "ERROR: Docker not running" && exit 1)
-	$(GO) test -race -count=1 -timeout=300s -tags=integration \
+	DOCKER_API_VERSION=1.41 $(GO) test -race -count=1 -timeout=300s -tags=integration \
 	  -coverprofile=coverage-integration.out -covermode=atomic \
 	  ./tests/integration/...
 	@echo "    OK: Integration tests passed"

@@ -1020,3 +1020,77 @@ select.field-control { cursor: pointer; }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; }
 .mono { font-family: var(--font-mono); }
 .truncate { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* Custom RJSF Wizard Styles */
+.rjsf-dark fieldset {
+  border: none !important;
+  padding: 0 !important;
+  margin: 0 !important;
+}
+
+.rjsf-dark fieldset > legend {
+  display: none !important;
+}
+
+.rjsf-dark .form-group {
+  margin-bottom: 20px !important;
+}
+
+.rjsf-dark label {
+  display: block;
+  font-size: 13px !important;
+  color: #aaa !important;
+  margin-bottom: 8px !important;
+  font-weight: 500 !important;
+}
+
+.rjsf-dark input,
+.rjsf-dark select,
+.rjsf-dark textarea {
+  width: 100% !important;
+  background-color: #222 !important;
+  border: 1px solid #444 !important;
+  color: #fff !important;
+  padding: 10px 12px !important;
+  border-radius: 6px !important;
+  font-size: 14px !important;
+  box-sizing: border-box !important;
+  transition: border-color 0.2s;
+}
+
+.rjsf-dark input:focus,
+.rjsf-dark select:focus,
+.rjsf-dark textarea:focus {
+  outline: none !important;
+  border-color: #00D1FF !important;
+}
+
+.rjsf-dark .checkbox {
+  display: flex !important;
+  align-items: center !important;
+  margin-top: 10px !important;
+}
+
+.rjsf-dark .checkbox input {
+  width: 18px !important;
+  height: 18px !important;
+  margin-right: 10px !important;
+  margin-top: 0 !important;
+  cursor: pointer !important;
+}
+
+.rjsf-dark .checkbox label {
+  margin-bottom: 0 !important;
+  color: #eee !important;
+  font-size: 14px !important;
+  cursor: pointer !important;
+}
+
+/* Hide the array item toolbars (up/down/remove) */
+.rjsf-dark .array-item-toolbox {
+  display: none !important;
+}
+
+.rjsf-dark .btn-add::after {
+  content: " + Add Method";
+}
+

@@ -200,7 +200,9 @@ func TestPublishMethodsReturnMarshalErrors(t *testing.T) {
 		name string
 		call func() error
 	}{
-		{name: "envelope", call: func() error { return client.PublishEnvelope(context.Background(), "team", "wf", "node", map[string]string{}) }},
+		{name: "envelope", call: func() error {
+			return client.PublishEnvelope(context.Background(), "team", "wf", "node", map[string]string{})
+		}},
 		{name: "ui event", call: func() error { return client.PublishUIEvent(context.Background(), "team", UIEvent{}) }},
 		{name: "status", call: func() error { return client.PublishStatus(context.Background(), StatusUpdate{}) }},
 		{name: "telemetry", call: func() error { return client.PublishTelemetry(context.Background(), "team", TelemetryEvent{}) }},

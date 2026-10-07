@@ -95,6 +95,14 @@ func main() {
 		os.Exit(1)
 	}
 
+	if err := (&workflow.WebhookTestReconciler{
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "Unable to create WebhookTest controller")
+		os.Exit(1)
+	}
+
 	// Health probes — required for Kubernetes liveness/readiness checks
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
 		setupLog.Error(err, "Unable to set up health check")

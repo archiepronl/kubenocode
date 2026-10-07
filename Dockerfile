@@ -1,7 +1,10 @@
-FROM golang:1.22-alpine AS build
+FROM golang:1.26-alpine AS build
 WORKDIR /src
-COPY go.mod ./
+COPY go.mod go.sum ./
+COPY api ./api
+COPY core ./core
 COPY cmd ./cmd
+COPY docs ./docs
 COPY internal ./internal
 ARG TARGETOS=linux
 ARG TARGETARCH

@@ -13,6 +13,7 @@ spec:
       labels:
         control-plane: kttm-operator
     spec:
+      serviceAccountName: kttm-admin
       containers:
         - name: manager
           image: kttm-registry.localhost:5001/kttm-operator

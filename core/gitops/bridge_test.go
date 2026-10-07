@@ -97,7 +97,7 @@ func TestPushReturnsSnapshotRenderingError(t *testing.T) {
 func TestPushFilesystemFailures(t *testing.T) {
 	app := &kttmv1.KttmApp{
 		ObjectMeta: metav1.ObjectMeta{Name: "blocked", Namespace: "team-a"},
-		Spec: kttmv1.KttmAppSpec{GitOps: &kttmv1.GitOpsSpec{Repo: "https://example.invalid/flows", Path: "workflows"}},
+		Spec:       kttmv1.KttmAppSpec{GitOps: &kttmv1.GitOpsSpec{Repo: "https://example.invalid/flows", Path: "workflows"}},
 	}
 	t.Run("parent is a file", func(t *testing.T) {
 		repoDir := t.TempDir()

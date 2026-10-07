@@ -8,7 +8,10 @@ import (
 	v1alpha1 "github.com/kubeworkflow/flowengine/core/api/v1alpha1"
 	"github.com/kubeworkflow/flowengine/core/engine"
 	"github.com/kubeworkflow/flowengine/core/linter"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/config"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
@@ -30,6 +33,10 @@ func (*setupManager) GetControllerOptions() config.Controller { return config.Co
 func (*setupManager) GetCache() cache.Cache { return nil }
 
 func (m *setupManager) GetScheme() *runtime.Scheme { return m.scheme }
+
+func (*setupManager) GetRESTMapper() meta.RESTMapper {
+	return meta.NewDefaultRESTMapper([]schema.GroupVersion{v1alpha1.GroupVersion, corev1.SchemeGroupVersion})
+}
 
 func (*setupManager) GetLogger() logr.Logger { return logr.Discard() }
 

@@ -49,6 +49,7 @@ build:
 manifests:
   rawYaml:
     - deploy/crds/kttmapp_crd.yaml      # CRD must come first
+    - deploy/crds/webhooktest_crd.yaml  # Webhook test CRD
     - deploy/rbac/admin-user.yaml       # Admin ServiceAccount
     - deploy/operator/deployment.yaml   # Operator deployment
     - deploy/server/deployment.yaml     # API server deployment

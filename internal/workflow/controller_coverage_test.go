@@ -1,4 +1,5 @@
 package controller
+
 import (
 	"context"
 	"errors"
@@ -240,7 +241,7 @@ func TestApplyHelpersAndPhaseConditionUpdates(t *testing.T) {
 	if err := reconciler.applyArgoWorkflow(context.Background(), app, compiled); err != nil {
 		t.Fatalf("applyArgoWorkflow() error = %v", err)
 	}
-	if err := reconciler.applyArgoWorkflow(context.Background(), app, &engine.CompiledManifest{Raw: []byte("{" )}); err == nil {
+	if err := reconciler.applyArgoWorkflow(context.Background(), app, &engine.CompiledManifest{Raw: []byte("{")}); err == nil {
 		t.Fatal("applyArgoWorkflow() accepted invalid JSON")
 	}
 	app.Spec.UILayoutSchema = `{"type":"object"}`
@@ -272,8 +273,8 @@ func newReconciler(t *testing.T, apps ...*v1alpha1.FullStackApplication) (*FullS
 	}
 	capture := &patchCaptureClient{app: app, key: key}
 	reconciler := &FullStackApplicationReconciler{
-		Client: capture,
-		Linter: linter.New(),
+		Client:   capture,
+		Linter:   linter.New(),
 		Compiler: engine.NewArgoCompiler(),
 	}
 	return reconciler, capture, key

@@ -8,7 +8,48 @@ import '@xyflow/react/dist/style.css';
 const schemas = {
   'trigger/webhook': {
     type: 'object',
-    properties: { path: { type: 'string', title: 'Webhook Path' } }
+    title: 'Advanced Webhook Configuration',
+    properties: {
+      server: {
+        type: 'object',
+        title: 'Server Configuration',
+        properties: {
+          protocol: { type: 'string', title: 'Protocol', enum: ['HTTP', 'HTTPS', 'WebSocket', 'gRPC'], default: 'HTTP' },
+          port: { type: 'number', title: 'Port', default: 8090 },
+          host: { type: 'string', title: 'Bind Host', default: '0.0.0.0' },
+          exposure: { type: 'string', title: 'Network Exposure', enum: ['Internal (Cluster Only)', 'External (Public)'], default: 'External (Public)' }
+        }
+      },
+      endpoint: {
+        type: 'object',
+        title: 'Endpoint Details',
+        properties: {
+          path: { type: 'string', title: 'Path', default: '/webhook' },
+          methods: { 
+            type: 'array', 
+            title: 'Allowed Methods',
+            items: { type: 'string', enum: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'] },
+            default: ['POST']
+          }
+        }
+      },
+      contract: {
+        type: 'object',
+        title: 'Payload Contract (JSON Schema)',
+        properties: {
+          validatePayload: { type: 'boolean', title: 'Validate Incoming Payload', default: false },
+          schemaDefinition: { type: 'string', title: 'JSON Schema definition', format: 'textarea' }
+        }
+      },
+      security: {
+        type: 'object',
+        title: 'Security',
+        properties: {
+          authentication: { type: 'string', enum: ['None', 'HMAC', 'Basic Auth', 'OAuth2', 'mTLS'], default: 'None' },
+          secretRef: { type: 'string', title: 'Secret Reference (if applicable)' }
+        }
+      }
+    }
   },
   'script/python': {
     type: 'object',
@@ -110,7 +151,7 @@ export function WorkflowCanvas({ appName: initialAppName, onBack }) {
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', width: '100vw', background: '#0a0a0a', color: 'white' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', width: '100vw', background: '#0a0a0a', color: 'white', overflow: 'hidden' }}>
       
       {/* Header Toolbar */}
       <div style={{ padding: '15px', background: '#111', borderBottom: '1px solid #333', display: 'flex', gap: '15px', alignItems: 'center' }}>
@@ -142,7 +183,7 @@ export function WorkflowCanvas({ appName: initialAppName, onBack }) {
         </div>
       </div>
 
-      <div style={{ display: 'flex', flex: 1, position: 'relative' }}>
+      <div style={{ display: 'flex', flex: 1, position: 'relative', overflow: 'hidden' }}>
         
         {viewMode === 'visual' ? (
           <>
@@ -175,7 +216,7 @@ export function WorkflowCanvas({ appName: initialAppName, onBack }) {
             </div>
 
             {/* Node Config Sidebar */}
-            <div style={{ width: '300px', borderLeft: '1px solid #333', background: '#151515' }}>
+            <div style={{ width: '450px', borderLeft: '1px solid #333', background: '#111111' }}>
               <ConfigSidebar selectedNode={selectedNode} schemas={schemas} onUpdate={handleUpdateNode} />
             </div>
           </>

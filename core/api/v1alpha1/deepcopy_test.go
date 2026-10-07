@@ -90,7 +90,7 @@ func TestKttmAppDeepCopiesNestedFields(t *testing.T) {
 			DisplayName: "Orders", Version: "1.0.0", Mode: AppModeWorkflow,
 			RBAC: KttmRBACSpec{ServiceAccountName: "runner", Roles: []KttmRole{{Name: "operator", Permissions: []string{"app:execute"}}}},
 			UILayout: &UILayoutSpec{
-				Schema: `{"type":"object"}`,
+				Schema:             `{"type":"object"}`,
 				SchemaConfigMapRef: &corev1.ConfigMapKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: "schema"}, Key: "schema.json"},
 				CustomReactBundle:  &corev1.ConfigMapKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: "bundle"}, Key: "remote.js"},
 			},

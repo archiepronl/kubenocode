@@ -27,9 +27,9 @@ func (w *failAfterWriter) Write(data []byte) (int, error) {
 
 func TestExecuteDispatchAndUsage(t *testing.T) {
 	tests := []struct {
-		name string
-		args []string
-		want string
+		name    string
+		args    []string
+		want    string
 		wantErr string
 	}{
 		{name: "no arguments", want: "USAGE:"},
@@ -67,7 +67,9 @@ func TestRunAndValidateCommands(t *testing.T) {
 	if err := runCmd([]string{filepath.Join(t.TempDir(), "missing.yaml")}); err == nil || !strings.Contains(err.Error(), "reading workflow file") {
 		t.Fatalf("runCmd(missing file) error = %v", err)
 	}
-	output, err := captureStdout(func() error { return runCmd([]string{"--dry-run", "--runtime", "podman", "--namespace", "team-a", workflow}) })
+	output, err := captureStdout(func() error {
+		return runCmd([]string{"--dry-run", "--runtime", "podman", "--namespace", "team-a", workflow})
+	})
 	if err != nil || !strings.Contains(output, "[DRY RUN]") || !strings.Contains(output, content) || !strings.Contains(output, "Runtime:   podman") {
 		t.Fatalf("runCmd(dry run) = (%q, %v)", output, err)
 	}
@@ -178,7 +180,9 @@ func TestExportImportAndVersionCommands(t *testing.T) {
 	if err := importCmd([]string{"--unknown"}); err == nil {
 		t.Fatal("importCmd() accepted an unknown flag")
 	}
-	output, err = captureStdout(func() error { return importCmd([]string{"--registry", "registry.local:5000", "--apply=false", archivePath}) })
+	output, err = captureStdout(func() error {
+		return importCmd([]string{"--registry", "registry.local:5000", "--apply=false", archivePath})
+	})
 	if err != nil || !strings.Contains(output, "registry.local:5000") || strings.Contains(output, "Applying workflow manifest") {
 		t.Fatalf("importCmd(flags) = (%q, %v)", output, err)
 	}

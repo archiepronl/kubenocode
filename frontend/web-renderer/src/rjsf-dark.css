@@ -1,0 +1,113 @@
+/* Custom Premium RJSF Wizard Styles */
+.rjsf-dark {
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+}
+
+.rjsf-dark fieldset {
+  border: none !important;
+  padding: 0 !important;
+  margin: 0 !important;
+}
+
+.rjsf-dark fieldset > legend {
+  display: none !important;
+}
+
+/* Make object groupings look like premium cards */
+.rjsf-dark fieldset fieldset {
+  background: #1a1a1a;
+  border-radius: 8px !important;
+  padding: 16px !important;
+  margin-bottom: 20px !important;
+  border: 1px solid #333 !important;
+}
+
+.rjsf-dark .form-group {
+  margin-bottom: 16px !important;
+}
+
+.rjsf-dark label {
+  display: block;
+  font-size: 13px !important;
+  color: #bbb !important;
+  margin-bottom: 6px !important;
+  font-weight: 500 !important;
+}
+
+.rjsf-dark input,
+.rjsf-dark select,
+.rjsf-dark textarea {
+  width: 100% !important;
+  background-color: #000 !important;
+  border: 1px solid #444 !important;
+  color: #fff !important;
+  padding: 10px 12px !important;
+  border-radius: 6px !important;
+  font-size: 14px !important;
+  box-sizing: border-box !important;
+  transition: all 0.2s ease;
+}
+
+.rjsf-dark input:focus,
+.rjsf-dark select:focus,
+.rjsf-dark textarea:focus {
+  outline: none !important;
+  border-color: #00D1FF !important;
+  box-shadow: 0 0 0 2px rgba(0, 209, 255, 0.2) !important;
+}
+
+.rjsf-dark .checkbox {
+  display: flex !important;
+  align-items: center !important;
+  margin-top: 12px !important;
+  background: #111;
+  padding: 12px;
+  border-radius: 6px;
+  border: 1px solid #333;
+}
+
+.rjsf-dark .checkbox input {
+  width: 18px !important;
+  height: 18px !important;
+  margin-right: 12px !important;
+  margin-top: 0 !important;
+  cursor: pointer !important;
+  accent-color: #00D1FF;
+}
+
+.rjsf-dark .checkbox label {
+  margin-bottom: 0 !important;
+  color: #eee !important;
+  font-size: 14px !important;
+  cursor: pointer !important;
+}
+
+/* Hide the array item toolbars (up/down/remove) */
+.rjsf-dark .array-item-toolbox {
+  display: none !important;
+}
+
+.rjsf-dark .btn-add {
+  background: #222 !important;
+  color: #fff !important;
+  border: 1px dashed #555 !important;
+  padding: 8px 12px !important;
+  border-radius: 6px !important;
+  cursor: pointer !important;
+  font-size: 13px !important;
+  width: 100%;
+}
+.rjsf-dark .btn-add:hover {
+  background: #333 !important;
+  border-color: #00D1FF !important;
+}
+.rjsf-dark .btn-add::after {
+  content: " + Add Item";
+}
+
+.rjsf-dark .control-label {
+  color: #fff !important;
+  font-size: 14px !important;
+  font-weight: 600 !important;
+  margin-bottom: 12px !important;
+}

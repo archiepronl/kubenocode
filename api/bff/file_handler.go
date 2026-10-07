@@ -96,7 +96,7 @@ func HandleAppGet(w http.ResponseWriter, r *http.Request) {
 
 	fileLocation := filepath.Join(AppsDir, fmt.Sprintf("%s.yaml", name))
 	data, err := os.ReadFile(fileLocation)
-	
+
 	var payload KttmAppPayload
 	if err == nil {
 		_ = yaml.Unmarshal(data, &payload)

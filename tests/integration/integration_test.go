@@ -22,10 +22,11 @@ import (
 // TestMain starts shared infrastructure once for all integration tests.
 // Individual tests use testinfra.Env.* for connection strings.
 func TestMain(m *testing.M) {
-	// Use a dummy *testing.T for infrastructure setup
-	// (testcontainers requires it for logging)
-	t := &testing.T{}
-	cleanup := testinfra.StartAll(t)
+	cleanup, err := testinfra.StartAll(context.Background())
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "test infrastructure startup failed: %v\n", err)
+		os.Exit(1)
+	}
 	code := m.Run()
 	cleanup()
 	os.Exit(code)

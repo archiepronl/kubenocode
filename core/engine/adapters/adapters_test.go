@@ -11,8 +11,8 @@ import (
 
 func TestBuiltInAdaptersPreserveEnvelopeAndStream(t *testing.T) {
 	tests := []struct {
-		name       string
-		adapter    interface {
+		name    string
+		adapter interface {
 			MimeTypes() []string
 			Process(context.Context, interface{}, io.Reader) (interface{}, io.ReadCloser, error)
 		}

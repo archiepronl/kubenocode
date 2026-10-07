@@ -15,6 +15,7 @@ spec:
       labels:
         app: kttm-server
     spec:
+      serviceAccountName: kttm-admin
       containers:
         - name: server
           image: kttm-registry.localhost:5001/kttm-server

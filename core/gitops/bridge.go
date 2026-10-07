@@ -9,9 +9,9 @@
 package gitops
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"context"
 	"fmt"
 	"os"
 	"path/filepath"
