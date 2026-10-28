@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { PermissionGate } from '../hooks/usePermissions.jsx';
 import { AdminConsole } from './AdminConsole.jsx';
-import { OrganizationSettings } from './OrganizationSettings.jsx';
+import { ProjectTreeSettings } from './ProjectTreeSettings.jsx';
+import { NodePropertiesModal } from './NodePropertiesModal.jsx';
 
 // Common UI Components
 const Card = ({ children, style }) => (
@@ -46,13 +47,93 @@ export function Dashboard({ onOpenEditor, onLogout }) {
   const [loading, setLoading] = useState(true);
   const [newAppName, setNewAppName] = useState('');
   const [activeTab, setActiveTab] = useState('Overview');
-  const [activeOrg, setActiveOrg] = useState(null);
+  const [activeProjectTree, setActiveProjectTree] = useState(null);
+
+  // Layout flexibility states for sidebars
+  const [sidebarWidth, setSidebarWidth] = useState(() => {
+    const saved = localStorage.getItem('nextkube_dash_sidebar_width');
+    return saved ? parseInt(saved, 10) : 240;
+  });
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [helpWidth, setHelpWidth] = useState(() => {
+    const saved = localStorage.getItem('nextkube_dash_help_width');
+    return saved ? parseInt(saved, 10) : 280;
+  });
+  const [helpCollapsed, setHelpCollapsed] = useState(false);
+
+  const isDraggingSidebar = React.useRef(false);
+  const isDraggingHelp = React.useRef(false);
 
   useEffect(() => {
-    const saved = localStorage.getItem('nextkube_orgs');
+    const handleMouseMove = (e) => {
+      if (isDraggingSidebar.current) {
+        const newW = Math.max(160, Math.min(480, e.clientX));
+        setSidebarWidth(newW);
+        localStorage.setItem('nextkube_dash_sidebar_width', newW);
+      }
+      if (isDraggingHelp.current) {
+        const newW = Math.max(180, Math.min(500, window.innerWidth - e.clientX));
+        setHelpWidth(newW);
+        localStorage.setItem('nextkube_dash_help_width', newW);
+      }
+    };
+    const handleMouseUp = () => {
+      if (isDraggingSidebar.current || isDraggingHelp.current) {
+        isDraggingSidebar.current = false;
+        isDraggingHelp.current = false;
+        document.body.style.cursor = 'default';
+        document.body.style.userSelect = 'auto';
+      }
+    };
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, []);
+
+  // Edit Node Properties from Main Menu
+  const [modalNode, setModalNode] = useState(null);
+
+  const updateNodeInTree = (node, id, updates) => {
+    if (!node) return node;
+    if (node.id === id) return { ...node, ...updates };
+    if (node.children) {
+      return { ...node, children: node.children.map(c => updateNodeInTree(c, id, updates)) };
+    }
+    return node;
+  };
+
+  const handleSaveMenuNodeProperties = (nodeId, updates) => {
+    if (!activeProjectTree) return;
+    const newTreeRoot = updateNodeInTree(activeProjectTree.tree, nodeId, updates);
+    const updatedTree = { ...activeProjectTree, tree: newTreeRoot };
+    setActiveProjectTree(updatedTree);
+    
+    // Persist in localStorage
+    const saved = localStorage.getItem('nextkube_project_trees') || localStorage.getItem('nextkube_orgs');
     if (saved) {
-      const parsed = JSON.parse(saved);
-      if (parsed.length > 0) setActiveOrg(parsed[0]);
+      try {
+        const trees = JSON.parse(saved);
+        const updatedList = trees.map(t => t.id === activeProjectTree.id ? updatedTree : t);
+        localStorage.setItem('nextkube_project_trees', JSON.stringify(updatedList));
+        localStorage.setItem('nextkube_orgs', JSON.stringify(updatedList));
+      } catch (e) {
+        console.error('Failed to save node update', e);
+      }
+    }
+  };
+
+  useEffect(() => {
+    const saved = localStorage.getItem('nextkube_project_trees') || localStorage.getItem('nextkube_orgs');
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (parsed.length > 0) setActiveProjectTree(parsed[0]);
+      } catch (e) {
+        console.error('Error loading project trees', e);
+      }
     }
   }, []);
 
@@ -87,7 +168,7 @@ export function Dashboard({ onOpenEditor, onLogout }) {
   const handleCreate = (e) => {
     e.preventDefault();
     if (newAppName.trim()) {
-      onOpenEditor(newAppName.trim());
+      onOpenEditor({ name: newAppName.trim(), type: 'leaf_workflow' });
       setNewAppName('');
     }
   };
@@ -117,64 +198,197 @@ export function Dashboard({ onOpenEditor, onLogout }) {
       <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
         
         {/* Left Nav */}
-        <aside style={{ width: '240px', background: '#FFFFFF', borderRight: '1px solid #E2E8F0', padding: '24px 0', flexShrink: 0, overflowY: 'auto' }}>
-          
-          {/* Dynamic Organization Menu */}
-          {activeOrg && (
-            <div style={{ marginBottom: '24px' }}>
-              <div style={{ padding: '0 24px', fontSize: '0.75rem', fontWeight: '700', color: '#94A3B8', textTransform: 'uppercase', marginBottom: '8px', letterSpacing: '0.05em' }}>
-                {activeOrg.name}
-              </div>
-              <nav style={{ display: 'flex', flexDirection: 'column', gap: '4px', padding: '0 16px' }}>
-                {/* Recursively render tree. For simplicity in this demo, just map root children */}
-                {activeOrg.tree?.children?.map(child => (
-                  <div key={child.id}>
-                    <div style={{ padding: '8px 16px', fontSize: '0.875rem', fontWeight: '600', color: '#475569', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      {child.type === 'structural' ? '📁' : child.type === 'leaf_workflow' ? '⚡️' : '🌐'} {child.name}
-                    </div>
-                    {child.children?.map(sub => (
-                      <div key={sub.id} onClick={() => { setActiveTab('dynamic_'+sub.id); onOpenEditor(sub.name); }} style={{ 
-                        padding: '8px 16px 8px 40px', borderRadius: '6px', cursor: 'pointer', fontSize: '0.875rem',
-                        background: activeTab === 'dynamic_'+sub.id ? '#EEF2FF' : 'transparent',
-                        color: activeTab === 'dynamic_'+sub.id ? '#4F46E5' : '#64748B',
-                        display: 'flex', alignItems: 'center', gap: '8px'
-                      }}>
-                        {sub.type === 'structural' ? '📁' : sub.type === 'leaf_workflow' ? '⚡️' : '🌐'} {sub.name}
-                      </div>
-                    ))}
-                  </div>
-                ))}
-              </nav>
+        {!sidebarCollapsed ? (
+          <aside style={{ 
+            width: `${sidebarWidth}px`, 
+            minWidth: '160px', 
+            maxWidth: '480px', 
+            background: '#FFFFFF', 
+            borderRight: '1px solid #E2E8F0', 
+            padding: '20px 0', 
+            flexShrink: 0, 
+            overflowY: 'auto',
+            display: 'flex',
+            flexDirection: 'column',
+            position: 'relative'
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '0 16px 8px 16px' }}>
+              <button 
+                onClick={() => setSidebarCollapsed(true)} 
+                title="Collapse Sidebar"
+                style={{ background: '#F1F5F9', border: '1px solid #CBD5E1', borderRadius: '4px', cursor: 'pointer', padding: '2px 6px', fontSize: '0.75rem', color: '#64748B' }}>
+                ◀
+              </button>
             </div>
-          )}
-
-          <div style={{ padding: '0 24px', fontSize: '0.75rem', fontWeight: '700', color: '#94A3B8', textTransform: 'uppercase', marginBottom: '8px', letterSpacing: '0.05em' }}>
-            System
-          </div>
-          <nav style={{ display: 'flex', flexDirection: 'column', gap: '4px', padding: '0 16px' }}>
-            {['Overview', 'Security', 'Organization'].map((item) => {
-              const isActive = activeTab === item;
-              return (
-                <div key={item} onClick={() => setActiveTab(item)} style={{ 
-                  padding: '10px 16px', 
-                  borderRadius: '6px', 
-                  background: isActive ? '#EEF2FF' : 'transparent',
-                  color: isActive ? '#4F46E5' : '#64748B',
-                  fontWeight: isActive ? '600' : '500',
-                  cursor: 'pointer'
-                }}>
-                  {item}
+            
+            {/* Dynamic Project Tree Menu */}
+            {activeProjectTree && (
+              <div style={{ marginBottom: '24px' }}>
+                <div style={{ padding: '0 20px', fontSize: '0.75rem', fontWeight: '700', color: '#94A3B8', textTransform: 'uppercase', marginBottom: '8px', letterSpacing: '0.05em', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span>{activeProjectTree.name}</span>
+                  <span style={{ fontSize: '0.7rem', color: '#4F46E5', cursor: 'pointer', textTransform: 'none', fontWeight: '600' }} onClick={() => setActiveTab('Project Tree')}>
+                    Tree Settings &rarr;
+                  </span>
                 </div>
-              );
-            })}
-          </nav>
-        </aside>
+                <nav style={{ display: 'flex', flexDirection: 'column', gap: '4px', padding: '0 12px' }}>
+                  {/* Recursively render tree nodes with edit gear and K8s indicators */}
+                  {activeProjectTree.tree?.children?.map(child => (
+                    <div key={child.id} style={{ marginBottom: '4px' }}>
+                      <div 
+                        onClick={() => {
+                          if (child.type !== 'structural') {
+                            setActiveTab('dynamic_'+child.id);
+                            onOpenEditor({ name: child.name, type: child.type, node: child });
+                          }
+                        }}
+                        style={{ 
+                          padding: '6px 10px', fontSize: '0.875rem', fontWeight: '600', color: '#334155', 
+                          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                          borderRadius: '6px', background: '#F8FAFC', border: '1px solid #F1F5F9',
+                          cursor: child.type !== 'structural' ? 'pointer' : 'default'
+                        }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          <span>{child.type === 'structural' ? '📁' : child.type === 'leaf_workflow' ? '⚡️' : '🌐'}</span>
+                          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{child.name}</span>
+                          <span style={{ fontSize: '0.65rem', padding: '1px 5px', borderRadius: '3px', background: child.k8s_mapping === 'namespace' ? '#DBEAFE' : '#E2E8F0', color: child.k8s_mapping === 'namespace' ? '#1E40AF' : '#475569' }}>
+                            {child.k8s_mapping === 'namespace' ? 'ns' : child.k8s_mapping}
+                          </span>
+                        </div>
+                        <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+                          {child.type !== 'structural' && (
+                            <button
+                              title={`Open Studio for ${child.name}`}
+                              onClick={(e) => { e.stopPropagation(); onOpenEditor({ name: child.name, type: child.type, node: child }); }}
+                              style={{
+                                background: '#EEF2FF', border: '1px solid #C7D2FE', borderRadius: '4px',
+                                cursor: 'pointer', fontSize: '0.72rem', padding: '2px 5px', color: '#4F46E5', fontWeight: '600'
+                              }}
+                            >
+                              Studio
+                            </button>
+                          )}
+                          <button
+                            title={`Edit Kubernetes properties for ${child.name}`}
+                            onClick={(e) => { e.stopPropagation(); setModalNode(child); }}
+                            style={{
+                              background: '#FFFFFF', border: '1px solid #CBD5E1', borderRadius: '4px',
+                              cursor: 'pointer', fontSize: '0.75rem', padding: '2px 5px', color: '#64748B'
+                            }}
+                          >
+                            ⚙
+                          </button>
+                        </div>
+                      </div>
+
+                      {child.children?.map(sub => (
+                        <div 
+                          key={sub.id} 
+                          style={{ 
+                            padding: '6px 10px 6px 28px', borderRadius: '6px', cursor: 'pointer', fontSize: '0.85rem',
+                            background: activeTab === 'dynamic_'+sub.id ? '#EEF2FF' : 'transparent',
+                            color: activeTab === 'dynamic_'+sub.id ? '#4F46E5' : '#475569',
+                            display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: '2px'
+                          }}
+                          onClick={() => { 
+                            setActiveTab('dynamic_'+sub.id); 
+                            onOpenEditor({ name: sub.name, type: sub.type, node: sub }); 
+                          }}
+                        >
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', overflow: 'hidden' }}>
+                            <span>{sub.type === 'structural' ? '📁' : sub.type === 'leaf_workflow' ? '⚡️' : '🌐'}</span>
+                            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sub.name}</span>
+                            {sub.resources?.limits?.cpu && (
+                              <span style={{ fontSize: '0.6rem', padding: '1px 4px', borderRadius: '3px', background: '#FEF3C7', color: '#92400E' }}>
+                                {sub.resources.limits.cpu}
+                              </span>
+                            )}
+                          </div>
+                          <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+                            <button
+                              title={`Open Studio for ${sub.name}`}
+                              onClick={(e) => { e.stopPropagation(); onOpenEditor({ name: sub.name, type: sub.type, node: sub }); }}
+                              style={{
+                                background: '#EEF2FF', border: '1px solid #C7D2FE', borderRadius: '4px',
+                                cursor: 'pointer', fontSize: '0.7rem', padding: '1px 5px', color: '#4F46E5', fontWeight: '600'
+                              }}
+                            >
+                              Studio
+                            </button>
+                            <button
+                              title={`Edit Kubernetes properties for ${sub.name}`}
+                              onClick={(e) => { e.stopPropagation(); setModalNode(sub); }}
+                              style={{
+                                background: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: '4px',
+                                cursor: 'pointer', fontSize: '0.7rem', padding: '1px 4px', color: '#94A3B8'
+                              }}
+                            >
+                              ⚙
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ))}
+                </nav>
+              </div>
+            )}
+
+            <div style={{ padding: '0 24px', fontSize: '0.75rem', fontWeight: '700', color: '#94A3B8', textTransform: 'uppercase', marginBottom: '8px', letterSpacing: '0.05em' }}>
+              System
+            </div>
+            <nav style={{ display: 'flex', flexDirection: 'column', gap: '4px', padding: '0 16px', flex: 1 }}>
+              {['Overview', 'Security', 'Project Tree'].map((item) => {
+                const isActive = activeTab === item;
+                return (
+                  <div key={item} onClick={() => setActiveTab(item)} style={{ 
+                    padding: '10px 16px', 
+                    borderRadius: '6px', 
+                    background: isActive ? '#EEF2FF' : 'transparent',
+                    color: isActive ? '#4F46E5' : '#64748B',
+                    fontWeight: isActive ? '600' : '500',
+                    cursor: 'pointer'
+                  }}>
+                    {item}
+                  </div>
+                );
+              })}
+            </nav>
+          </aside>
+        ) : (
+          <div style={{ width: '36px', background: '#FFFFFF', borderRight: '1px solid #E2E8F0', display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '16px 0', flexShrink: 0 }}>
+            <button 
+              onClick={() => setSidebarCollapsed(false)} 
+              title="Expand Sidebar"
+              style={{ background: '#F1F5F9', border: '1px solid #CBD5E1', borderRadius: '4px', cursor: 'pointer', padding: '4px', fontSize: '0.8rem', color: '#64748B' }}>
+              ▶
+            </button>
+            <div style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)', marginTop: '24px', fontSize: '0.75rem', fontWeight: '600', color: '#94A3B8', letterSpacing: '0.05em' }}>
+              NAVIGATION
+            </div>
+          </div>
+        )}
+
+        {/* Sidebar Drag Resizer */}
+        {!sidebarCollapsed && (
+          <div 
+            onMouseDown={(e) => {
+              e.preventDefault();
+              isDraggingSidebar.current = true;
+              document.body.style.cursor = 'col-resize';
+              document.body.style.userSelect = 'none';
+            }}
+            title="Drag to resize Navigation sidebar"
+            style={{ width: '5px', cursor: 'col-resize', background: 'transparent', zIndex: 10, flexShrink: 0, transition: 'background 0.2s' }}
+            onMouseEnter={e => e.currentTarget.style.background = '#818CF8'}
+            onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+          />
+        )}
 
         {/* Center Content */}
-        {activeTab === 'Organization' ? (
+        {activeTab === 'Project Tree' ? (
           <PermissionGate requiredPermission="admin" fallback={<div style={{ padding: '32px 48px' }}>Access Denied: Admins Only</div>}>
             <div style={{ flex: 1, overflow: 'hidden' }}>
-              <OrganizationSettings onOrganizationChanged={setActiveOrg} />
+              <ProjectTreeSettings onProjectTreeChanged={setActiveProjectTree} onOpenStudio={onOpenEditor} />
             </div>
           </PermissionGate>
         ) : activeTab === 'Security' ? (
@@ -247,7 +461,7 @@ export function Dashboard({ onOpenEditor, onLogout }) {
                       <td style={{ padding: '16px 24px', color: '#64748B', fontSize: '0.875rem' }}>Just now</td>
                       <td style={{ padding: '16px 24px', textAlign: 'right' }}>
                         <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
-                          <Button onClick={() => onOpenEditor(app)}>Edit</Button>
+                          <Button onClick={() => onOpenEditor({ name: app, type: 'leaf_workflow' })}>Open Studio</Button>
                           <PermissionGate requiredPermission="app:delete">
                             <Button onClick={() => handleDelete(app)} style={{ color: '#EF4444', borderColor: '#FECACA', background: '#FEF2F2' }}>Delete</Button>
                           </PermissionGate>
@@ -296,27 +510,78 @@ export function Dashboard({ onOpenEditor, onLogout }) {
           </main>
         )}
 
-        {/* Right Help Panel */}
-        <aside style={{ width: '280px', background: '#FAFAF9', borderLeft: '1px solid #E2E8F0', padding: '32px 24px', flexShrink: 0 }}>
-          <h3 style={{ fontSize: '1.125rem', fontWeight: '600', margin: '0 0 12px 0' }}>Help</h3>
-          <p style={{ color: '#64748B', fontSize: '0.875rem', lineHeight: '1.5', marginBottom: '24px' }}>
-            Need support with your workflows? Access our documentation or contact the support team.
-          </p>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '40px' }}>
-            <a href="#" style={{ color: '#4F46E5', textDecoration: 'none', fontSize: '0.875rem', fontWeight: '500' }}>Documentation &rarr;</a>
-            <a href="#" style={{ color: '#4F46E5', textDecoration: 'none', fontSize: '0.875rem', fontWeight: '500' }}>Workflow Guide &rarr;</a>
-            <a href="#" style={{ color: '#4F46E5', textDecoration: 'none', fontSize: '0.875rem', fontWeight: '500' }}>Contact Support &rarr;</a>
-          </div>
+        {/* Help Panel Resizer */}
+        {!helpCollapsed && (
+          <div 
+            onMouseDown={(e) => {
+              e.preventDefault();
+              isDraggingHelp.current = true;
+              document.body.style.cursor = 'col-resize';
+              document.body.style.userSelect = 'none';
+            }}
+            title="Drag to resize Help panel"
+            style={{ width: '5px', cursor: 'col-resize', background: 'transparent', zIndex: 10, flexShrink: 0, transition: 'background 0.2s' }}
+            onMouseEnter={e => e.currentTarget.style.background = '#818CF8'}
+            onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+          />
+        )}
 
-          <Card style={{ padding: '16px', background: '#FFFFFF' }}>
-            <h4 style={{ margin: '0 0 12px 0', fontSize: '0.875rem', fontWeight: '600' }}>Settings Preview</h4>
-            <div style={{ fontSize: '0.8125rem', color: '#64748B', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              <div><strong>Engine:</strong> Argo Workflows</div>
-              <div><strong>Repository:</strong> Local K3d</div>
-              <div><strong>Authentication:</strong> RBAC (Pending)</div>
+        {/* Right Help Panel */}
+        {!helpCollapsed ? (
+          <aside style={{ 
+            width: `${helpWidth}px`, 
+            minWidth: '180px', 
+            maxWidth: '500px', 
+            background: '#FAFAF9', 
+            borderLeft: '1px solid #E2E8F0', 
+            padding: '24px 20px', 
+            flexShrink: 0,
+            overflowY: 'auto',
+            display: 'flex',
+            flexDirection: 'column',
+            position: 'relative'
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+              <h3 style={{ fontSize: '1rem', fontWeight: '600', margin: 0, color: '#1E293B' }}>Help & Docs</h3>
+              <button 
+                onClick={() => setHelpCollapsed(true)} 
+                title="Collapse Help Panel"
+                style={{ background: '#F1F5F9', border: '1px solid #CBD5E1', borderRadius: '4px', cursor: 'pointer', padding: '2px 6px', fontSize: '0.75rem', color: '#64748B' }}>
+                ▶
+              </button>
             </div>
-          </Card>
-        </aside>
+            
+            <p style={{ color: '#64748B', fontSize: '0.85rem', lineHeight: '1.5', marginBottom: '20px' }}>
+              Need support with your workflows? Access our documentation or contact the support team.
+            </p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '28px' }}>
+              <a href="#" style={{ color: '#4F46E5', textDecoration: 'none', fontSize: '0.85rem', fontWeight: '500' }}>Documentation &rarr;</a>
+              <a href="#" style={{ color: '#4F46E5', textDecoration: 'none', fontSize: '0.85rem', fontWeight: '500' }}>Workflow Guide &rarr;</a>
+              <a href="#" style={{ color: '#4F46E5', textDecoration: 'none', fontSize: '0.85rem', fontWeight: '500' }}>Contact Support &rarr;</a>
+            </div>
+
+            <Card style={{ padding: '16px', background: '#FFFFFF' }}>
+              <h4 style={{ margin: '0 0 10px 0', fontSize: '0.85rem', fontWeight: '600' }}>Settings Preview</h4>
+              <div style={{ fontSize: '0.8rem', color: '#64748B', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                <div><strong>Engine:</strong> Argo Workflows</div>
+                <div><strong>Repository:</strong> Local K3d</div>
+                <div><strong>Authentication:</strong> RBAC (Pending)</div>
+              </div>
+            </Card>
+          </aside>
+        ) : (
+          <div style={{ width: '36px', background: '#FAFAF9', borderLeft: '1px solid #E2E8F0', display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '16px 0', flexShrink: 0 }}>
+            <button 
+              onClick={() => setHelpCollapsed(false)} 
+              title="Expand Help Panel"
+              style={{ background: '#F1F5F9', border: '1px solid #CBD5E1', borderRadius: '4px', cursor: 'pointer', padding: '4px', fontSize: '0.8rem', color: '#64748B' }}>
+              ◀
+            </button>
+            <div style={{ writingMode: 'vertical-rl', marginTop: '24px', fontSize: '0.75rem', fontWeight: '600', color: '#94A3B8', letterSpacing: '0.05em' }}>
+              HELP & DOCS
+            </div>
+          </div>
+        )}
 
       </div>
 
@@ -333,6 +598,17 @@ export function Dashboard({ onOpenEditor, onLogout }) {
           &copy; {new Date().getFullYear()} NextKube. All rights reserved.
         </div>
       </footer>
+      {/* Node Properties Modal for Main Menu edits */}
+      {modalNode && (
+        <NodePropertiesModal 
+          node={modalNode}
+          isOpen={!!modalNode}
+          onClose={() => setModalNode(null)}
+          onSave={handleSaveMenuNodeProperties}
+          hasAncestorNamespace={modalNode.k8s_mapping !== 'namespace' && activeProjectTree?.tree?.k8s_mapping === 'namespace'}
+          ancestorName={activeProjectTree?.tree?.name}
+        />
+      )}
     </div>
   );
 }

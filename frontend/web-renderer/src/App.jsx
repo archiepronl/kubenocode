@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { PermissionsProvider } from "./hooks/usePermissions.jsx";
 import { Dashboard } from './components/Dashboard.jsx';
+import { Studio } from './components/Studio.jsx';
 import { WizardEditor } from './components/WizardEditor.jsx';
 
 
@@ -95,7 +96,7 @@ export function App() {
         ) : currentView === 'dashboard' ? (
           <Dashboard onOpenEditor={handleOpenEditor} onLogout={handleLogout} />
         ) : (
-          <WizardEditor appName={editingApp} onBack={handleBackToDashboard} />
+          <Studio item={editingApp} onBack={handleBackToDashboard} />
         )}
       </div>
     </PermissionsProvider>
